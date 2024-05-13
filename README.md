@@ -10,15 +10,20 @@ This PowerShell script is designed to perform rapid initial data collection on a
 - Retrieves relevant event logs (Security, System, Application) from the last 24 hours and exports them to CSV files.
 - Captures active network connections and their details.
 - Analyzes critical registry keys related to autostart locations and exports their values to JSON files.
-- Collects Shimcache data by exporting the Shimcache registry key to a .reg file to be further analyzed with [Chainsaw](https://github.com/WithSecureLabs/chainsaw).
 - Performs a recursive search for recently modified files in critical system directories and collects file metadata and hashes.
 - Collects additional artifacts such as PowerShell console history and browser history.
 - Collects startup items using `Get-CimInstance -ClassName Win32_StartupCommand`.
 - Collects Firefox extensions by searching in the user profiles.
 - Collects Google Chrome extensions by iterating through user profiles and parsing manifest files.
-- Collects Chrome and Firefox browser history files.
+- Collects Chrome, Firefox, and Microsoft Edge browser history files.
 - Searches for files containing the word "password" using `Get-ChildItem` with the `-Include` parameter.
 - Collects user PowerShell history by searching for `ConsoleHost_history.txt` files in user profiles.
+- Collects Shimcache data by exporting the Shimcache registry key to a .reg file to be further analyzed with [Chainsaw](https://github.com/WithSecureLabs/chainsaw).
+- Collects Prefetch files from `C:\Windows\Prefetch`.
+- Collects Jump Lists from `C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations`.
+- Collects Windows Timeline data by exporting the relevant registry key and copying the `ActivitiesCache.db` files.
+- Calculates hash values (SHA-256) of collected files and stores them in a CSV file.
+- Includes logging functionality to record the script's actions, timestamps, and any encountered errors.
 - Compresses the output directory into a ZIP file for easy transfer and removes the original directory.
 
 ## Prerequisites
@@ -44,9 +49,11 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 6. The collected data will be saved in various formats (JSON, CSV, TXT) within the output directory.
 
-7. After the script finishes execution, the output directory will be compressed into a ZIP file with the same name as the directory.
+7. A log file named `script_log.txt` will be created in the output directory, recording the script's actions and any encountered errors.
 
-8. Transfer the ZIP file to a secure location for further analysis and investigation.
+8. After the script finishes execution, the output directory will be compressed into a ZIP file with the same name as the directory.
+
+9. Transfer the ZIP file to a secure location for further analysis and investigation.
 
 ## Customization
 
