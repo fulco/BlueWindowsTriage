@@ -3,6 +3,8 @@ A PowerShell script for rapid initial incident response data collection on a pot
 
 This PowerShell script is designed to perform rapid initial data collection on a potentially breached Windows system. It focuses on security, efficiency, and speed to gather crucial information during the early stages of an incident response process.
 
+![](https://github.com/fulco/BlueWindowsTriage/assets/802660/8ecfacea-0a77-48f7-98cc-c8d1ba2aadd7)
+
 ## Features
 
 - Collects system information, including hostname, OS version, uptime, installed software, running processes (and owner), and network configuration.
@@ -54,6 +56,8 @@ This PowerShell script is designed to perform rapid initial data collection on a
 8. After the script finishes execution, the output directory will be compressed into a ZIP file with the same name as the directory.
 
 9. Transfer the ZIP file to a secure location for further analysis and investigation.
+    
+[See Wiki for more details](https://github.com/fulco/BlueWindowsTriage/wiki/)
 
 ## Customization
 
@@ -71,6 +75,8 @@ You can customize the script to fit your specific incident response procedures a
 - Review and validate the script before running it on a production system to ensure it aligns with your organization's security policies.
 - Handle the collected data securely and in accordance with your organization's policies and legal requirements.
 - Regularly update the script to address new security threats, system changes, and best practices in incident response.
+
+[See Caveat Wiki for more details](https://github.com/fulco/BlueWindowsTriage/wiki/Caveats)
 
 ## Disclaimer
 
