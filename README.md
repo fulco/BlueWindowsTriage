@@ -10,6 +10,7 @@ This PowerShell script is designed to perform rapid initial data collection on a
 - Retrieves relevant event logs (Security, System, Application) from the last 24 hours and exports them to CSV files.
 - Captures active network connections and their details.
 - Analyzes critical registry keys related to autostart locations and exports their values to JSON files.
+- Collects Shimcache data by exporting the Shimcache registry key to a .reg file to be further analyzed with Chainsaw[https://github.com/WithSecureLabs/chainsaw].
 - Performs a recursive search for recently modified files in critical system directories and collects file metadata and hashes.
 - Collects additional artifacts such as PowerShell console history and browser history.
 - Collects startup items using `Get-CimInstance -ClassName Win32_StartupCommand`.

@@ -49,6 +49,10 @@ foreach ($key in $registryKeys) {
     $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName.json"
 }
 
+# Shimcache Collection
+$shimcacheFile = "$outputDir\Shimcache.reg"
+& reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
+
 # File System Analysis
 $criticalDirs = @("C:\Windows\System32", "C:\Windows\SysWOW64", "C:\Users\Public")
 foreach ($dir in $criticalDirs) {
@@ -119,6 +123,10 @@ $chromeHistoryFiles | Copy-Item -Destination $outputDir -Force
 # Firefox History Collection
 $firefoxHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite" -ErrorAction SilentlyContinue
 $firefoxHistoryFiles | Copy-Item -Destination $outputDir -Force
+
+# Microsoft Edge History Collection
+$edgeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\History" -ErrorAction SilentlyContinue
+$edgeHistoryFiles | Copy-Item -Destination $outputDir -Force
 
 # Search for Password Files
 $passwordFiles = Get-ChildItem -Path C:\ -Include *password* -File -Recurse -ErrorAction SilentlyContinue
