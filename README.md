@@ -5,7 +5,7 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 ## Features
 
-- Collects system information, including hostname, OS version, uptime, installed software, running processes, and network configuration.
+- Collects system information, including hostname, OS version, uptime, installed software, running processes (and owner), and network configuration.
 - Gathers user and group information, such as local users, user groups, and recently created user accounts.
 - Retrieves relevant event logs (Security, System, Application) from the last 24 hours and exports them to CSV files.
 - Captures active network connections and their details.
