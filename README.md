@@ -12,6 +12,11 @@ This PowerShell script is designed to perform rapid initial data collection on a
 - Analyzes critical registry keys related to autostart locations and exports their values to JSON files.
 - Performs a recursive search for recently modified files in critical system directories and collects file metadata and hashes.
 - Collects additional artifacts such as PowerShell console history and browser history.
+- Collects startup items using `Get-CimInstance -ClassName Win32_StartupCommand`.
+- Collects Firefox extensions by searching in the user profiles.
+- Collects Google Chrome extensions by iterating through user profiles and parsing manifest files.
+- Collects Chrome and Firefox browser history files.
+- Searches for files containing the word "password" using `Get-ChildItem` with the `-Include` parameter.
 - Compresses the output directory into a ZIP file for easy transfer and removes the original directory.
 
 ## Prerequisites
@@ -72,4 +77,4 @@ Contributions to improve the script are welcome. Please follow the standard GitH
 
 ## Contact
 
-For any questions or feedback, please contact the script maintainer at [security@fulco.net].
+For any questions or feedback, please contact the script maintainer at [email@example.com](mailto:email@example.com).

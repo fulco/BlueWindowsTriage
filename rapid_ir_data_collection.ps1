@@ -13,6 +13,10 @@ $systemInfo = @{
 }
 $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
 
+# Startup Items
+$startupItems = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -Property Command, Description, User, Location, Name
+$startupItems | ConvertTo-Json | Out-File -FilePath "$outputDir\StartupItems.json"
+
 # User and Group Information
 $userInfo = @{
     "Local Users" = Get-LocalUser | Select-Object Name, Enabled, LastLogon
@@ -60,6 +64,65 @@ foreach ($dir in $artifactDirs) {
         $artifacts | Copy-Item -Destination $outputDir -Force
     }
 }
+
+# Firefox Extension Collection
+$firefoxExtensions = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\extensions\*" -ErrorAction SilentlyContinue
+$firefoxExtensions | Select-Object FullName | ConvertTo-Json | Out-File -FilePath "$outputDir\FirefoxExtensions.json"
+
+# Google Chrome Extension Collection
+$UserPaths = (Get-WmiObject win32_userprofile | Where-Object localpath -notmatch 'Windows').localpath
+foreach ($Path in $UserPaths) {
+    $ExtPath = $Path + '\' + '\AppData\Local\Google\Chrome\User Data\Default\Extensions'
+    if (Test-Path $ExtPath) {
+        $Username = $Path | Split-Path -Leaf
+        $ExtFolders = Get-Childitem $ExtPath | Where-Object Name -ne 'Temp'
+        foreach ($Folder in $ExtFolders) {
+            $VerFolders = Get-Childitem $Folder.FullName
+            foreach ($Version in $VerFolders) {
+                if (Test-Path -Path ($Version.FullName + '\manifest.json')) {
+                    $Manifest = Get-Content ($Version.FullName + '\manifest.json') | ConvertFrom-Json
+                    if ($Manifest.name -like '__MSG*') {
+                        $AppId = ($Manifest.name -replace '__MSG_','').Trim('_')
+                        @('\_locales\en_US\', '\_locales\en\') | ForEach-Object {
+                            if (Test-Path -Path ($Version.Fullname + $_ + 'messages.json')) {
+                                $AppManifest = Get-Content ($Version.Fullname + $_ +
+                                'messages.json') | ConvertFrom-Json
+                                @($AppManifest.appName.message, $AppManifest.extName.message,
+                                $AppManifest.extensionName.message, $AppManifest.app_name.message,
+                                $AppManifest.application_title.message, $AppManifest.$AppId.message) |
+                                ForEach-Object {
+                                    if (($_) -and (-not($ExtName))) {
+                                        $ExtName = $_
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        $ExtName = $Manifest.name
+                    }
+                    Write-Output (($Path | Split-Path -Leaf) + ": " + [string] $ExtName +
+                    " v" + $Manifest.version + " (" + $Folder.name + ")")
+                    if ($ExtName) {
+                        Remove-Variable -Name ExtName
+                    }
+                }
+            }
+        }
+    }
+}
+
+# Chrome History Collection
+$chromeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\History" -ErrorAction SilentlyContinue
+$chromeHistoryFiles | Copy-Item -Destination $outputDir -Force
+
+# Firefox History Collection
+$firefoxHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite" -ErrorAction SilentlyContinue
+$firefoxHistoryFiles | Copy-Item -Destination $outputDir -Force
+
+# Search for Password Files
+$passwordFiles = Get-ChildItem -Path C:\ -Include *password* -File -Recurse -ErrorAction SilentlyContinue
+$passwordFiles | Select-Object FullName | ConvertTo-Json | Out-File -FilePath "$outputDir\PasswordFiles.json"
 
 # Compress and Timestamp Output
 $zipFile = "$outputDir.zip"
