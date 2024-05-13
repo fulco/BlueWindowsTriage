@@ -17,6 +17,7 @@ This PowerShell script is designed to perform rapid initial data collection on a
 - Collects Google Chrome extensions by iterating through user profiles and parsing manifest files.
 - Collects Chrome and Firefox browser history files.
 - Searches for files containing the word "password" using `Get-ChildItem` with the `-Include` parameter.
+- Collects user PowerShell history by searching for `ConsoleHost_history.txt` files in user profiles.
 - Compresses the output directory into a ZIP file for easy transfer and removes the original directory.
 
 ## Prerequisites
@@ -27,7 +28,7 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 ## Usage
 
-1. Download the script file `rapid_ir_data_collection.ps1` to your local machine.
+1. Download the script file `BlueWindowsTriage.ps1` to your local machine.
 
 2. Open a PowerShell console with administrative privileges.
 
@@ -35,12 +36,12 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 4. Execute the script by running the following command:
    ```
-   .\rapid_ir_data_collection.ps1
+   .\BlueWindowsTriage.ps1
    ```
 
 5. The script will create a timestamped output directory in the format `C:\IncidentResponse\yyyyMMdd_HHmmss`.
 
-6. The collected data will be saved in various formats (JSON, CSV) within the output directory.
+6. The collected data will be saved in various formats (JSON, CSV, TXT) within the output directory.
 
 7. After the script finishes execution, the output directory will be compressed into a ZIP file with the same name as the directory.
 

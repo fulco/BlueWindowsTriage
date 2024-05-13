@@ -124,6 +124,15 @@ $firefoxHistoryFiles | Copy-Item -Destination $outputDir -Force
 $passwordFiles = Get-ChildItem -Path C:\ -Include *password* -File -Recurse -ErrorAction SilentlyContinue
 $passwordFiles | Select-Object FullName | ConvertTo-Json | Out-File -FilePath "$outputDir\PasswordFiles.json"
 
+# User PowerShell History
+$Users = (Get-ChildItem C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt).FullName
+$Pasts = @($Users)
+
+foreach ($Past in $Pasts) {
+    Write-Host "`n----User Pwsh History Path $Past---" -ForegroundColor Magenta
+    Get-Content $Past | Out-File -FilePath "$outputDir\PowerShellHistory_$($Past.Split('\')[-2]).txt"
+}
+
 # Compress and Timestamp Output
 $zipFile = "$outputDir.zip"
 Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
