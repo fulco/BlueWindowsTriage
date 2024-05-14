@@ -24,6 +24,9 @@ This PowerShell script is designed to perform rapid initial data collection on a
 - Collects Prefetch files from `C:\Windows\Prefetch`.
 - Collects Jump Lists from `C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations`.
 - Collects Windows Timeline data by exporting the relevant registry key and copying the `ActivitiesCache.db` files.
+- Collects scheduled tasks information and exports it to JSON files.
+- Gathers detailed information about system services, including status and configurations.
+- Collects browser cookies from Chrome, Firefox, and Microsoft Edge for further analysis.
 - Calculates hash values (SHA-256) of collected files and stores them in a CSV file.
 - Includes logging functionality to record the script's actions, timestamps, and any encountered errors.
 - Compresses the output directory into a ZIP file for easy transfer and removes the original directory.
