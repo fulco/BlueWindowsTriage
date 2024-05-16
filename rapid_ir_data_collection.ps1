@@ -17,7 +17,7 @@ $logFile = "$outputDir\script_log.txt"
 Start-Transcript -Path $logFile -Append
 
 # Global error logging function
-function Log-Error {
+function Write-Output-error  {
     param (
         [string] $Message,
         [string] $LogFile = "$outputDir\error_log.txt"
@@ -35,7 +35,7 @@ function Get-FileHash {
         $hash = Get-FileHash -Path $FilePath -Algorithm $Algorithm -ErrorAction Stop
         return $hash.Hash
     } catch {
-        Log-Error "Error calculating hash for file: $FilePath - $_"
+        Write-Output-error  "Error calculating hash for file: $FilePath - $_"
         return $null
     }
 }
@@ -57,7 +57,7 @@ $jobs += Start-Job -ScriptBlock {
         }
         $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
     } catch {
-        Log-Error "Error collecting system information - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting system information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -68,7 +68,7 @@ $jobs += Start-Job -ScriptBlock {
         $startupItems = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -Property Command, Description, User, Location, Name
         $startupItems | ConvertTo-Json | Out-File -FilePath "$outputDir\StartupItems.json"
     } catch {
-        Log-Error "Error collecting startup items - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting startup items - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -83,7 +83,7 @@ $jobs += Start-Job -ScriptBlock {
         }
         $userInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\UserInfo.json"
     } catch {
-        Log-Error "Error collecting user and group information - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting user and group information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -97,7 +97,7 @@ $jobs += Start-Job -ScriptBlock {
             $events | Export-Csv -Path "$outputDir\$log.csv" -NoTypeInformation
         }
     } catch {
-        Log-Error "Error collecting event logs - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting event logs - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -108,7 +108,7 @@ $jobs += Start-Job -ScriptBlock {
         $networkConnections = Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess
         $networkConnections | ConvertTo-Json | Out-File -FilePath "$outputDir\NetworkConnections.json"
     } catch {
-        Log-Error "Error collecting network connections - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting network connections - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -128,7 +128,7 @@ $jobs += Start-Job -ScriptBlock {
             $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName.json"
         }
     } catch {
-        Log-Error "Error collecting registry data - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting registry data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -139,7 +139,7 @@ $jobs += Start-Job -ScriptBlock {
         $shimcacheFile = "$outputDir\Shimcache.reg"
         & reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
     } catch {
-        Log-Error "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -153,7 +153,7 @@ $jobs += Start-Job -ScriptBlock {
             $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation
         }
     } catch {
-        Log-Error "Error collecting file system data - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting file system data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -170,7 +170,7 @@ $jobs += Start-Job -ScriptBlock {
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $using:outputDir -Force
         }
     } catch {
-        Log-Error "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -181,7 +181,7 @@ $jobs += Start-Job -ScriptBlock {
         $scheduledTasks = Get-ScheduledTask | Select-Object TaskName, TaskPath, State, LastRunTime, NextRunTime, Actions
         $scheduledTasks | ConvertTo-Json | Out-File -FilePath "$outputDir\ScheduledTasks.json"
     } catch {
-        Log-Error "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -192,7 +192,7 @@ $jobs += Start-Job -ScriptBlock {
         $servicesInfo = Get-Service | Select-Object Name, DisplayName, Status, StartType, @{Name="Path";Expression={(Get-WmiObject -Class Win32_Service -Filter "Name='$($_.Name)'").PathName}}
         $servicesInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\ServicesInfo.json"
     } catch {
-        Log-Error "Error collecting service information - $_" "$outputDir\error_log.txt"
+        Write-Output-error  "Error collecting service information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -213,7 +213,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error collecting artifact data - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting artifact data - $_" "$outputDir\error_log.txt"
 }
 
 # Firefox Extension Collection
@@ -221,7 +221,7 @@ try {
     $firefoxExtensions = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\extensions\*" -ErrorAction SilentlyContinue
     $firefoxExtensions | Select-Object FullName | ConvertTo-Json | Out-File -FilePath "$outputDir\FirefoxExtensions.json"
 } catch {
-    Log-Error "Error collecting Firefox extensions - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Firefox extensions - $_" "$outputDir\error_log.txt"
 }
 
 # Google Chrome Extension Collection
@@ -230,7 +230,6 @@ try {
     foreach ($Path in $UserPaths) {
         $ExtPath = $Path + '\AppData\Local\Google\Chrome\User Data\Default\Extensions'
         if (Test-Path $ExtPath) {
-            $Username = $Path | Split-Path -Leaf
             $ExtFolders = Get-ChildItem $ExtPath | Where-Object Name -ne 'Temp'
             foreach ($Folder in $ExtFolders) {
                 $VerFolders = Get-ChildItem $Folder.FullName
@@ -262,7 +261,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error collecting Google Chrome extensions - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Google Chrome extensions - $_" "$outputDir\error_log.txt"
 }
 
 # Chrome History Collection
@@ -270,7 +269,7 @@ try {
     $chromeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\History" -ErrorAction SilentlyContinue
     $chromeHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Chrome history - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Chrome history - $_" "$outputDir\error_log.txt"
 }
 
 # Firefox History Collection
@@ -278,7 +277,7 @@ try {
     $firefoxHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite" -ErrorAction SilentlyContinue
     $firefoxHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Firefox history - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Firefox history - $_" "$outputDir\error_log.txt"
 }
 
 # Microsoft Edge History Collection
@@ -286,7 +285,7 @@ try {
     $edgeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\History" -ErrorAction SilentlyContinue
     $edgeHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Microsoft Edge history - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Microsoft Edge history - $_" "$outputDir\error_log.txt"
 }
 
 # Search for Password Files
@@ -294,7 +293,7 @@ try {
     $passwordFiles = Get-ChildItem -Path C:\ -Include *password* -File -Recurse -ErrorAction SilentlyContinue
     $passwordFiles | Select-Object FullName, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | ConvertTo-Json | Out-File -FilePath "$outputDir\PasswordFiles.json"
 } catch {
-    Log-Error "Error searching for password files - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error searching for password files - $_" "$outputDir\error_log.txt"
 }
 
 # User PowerShell History
@@ -306,7 +305,7 @@ try {
         Get-Content $Past | Out-File -FilePath "$outputDir\PowerShellHistory_$($Past.Split('\')[-2]).txt"
     }
 } catch {
-    Log-Error "Error collecting user PowerShell history - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting user PowerShell history - $_" "$outputDir\error_log.txt"
 }
 
 # Prefetch Files Collection
@@ -314,7 +313,7 @@ try {
     $prefetchFiles = Get-ChildItem -Path "C:\Windows\Prefetch" -ErrorAction SilentlyContinue
     $prefetchFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting prefetch files - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting prefetch files - $_" "$outputDir\error_log.txt"
 }
 
 # Jump Lists Collection
@@ -322,7 +321,7 @@ try {
     $jumpListFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations" -ErrorAction SilentlyContinue
     $jumpListFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting jump list files - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting jump list files - $_" "$outputDir\error_log.txt"
 }
 
 # Windows Timeline Collection
@@ -333,7 +332,7 @@ try {
     $timelineFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\ConnectedDevicesPlatform\*\ActivitiesCache.db" -ErrorAction SilentlyContinue
     $timelineFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Windows Timeline data - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Windows Timeline data - $_" "$outputDir\error_log.txt"
 }
 
 # Hashing of Collected Files
@@ -346,7 +345,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error calculating hashes for collected files - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error calculating hashes for collected files - $_" "$outputDir\error_log.txt"
 }
 
 # Compress and Timestamp Output
@@ -355,7 +354,7 @@ try {
     Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
     Remove-Item -Path $outputDir -Recurse -Force
 } catch {
-    Log-Error "Error compressing output directory - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error compressing output directory - $_" "$outputDir\error_log.txt"
 }
 
 # Stop logging
