@@ -1,10 +1,29 @@
-# Set the output directory
-$outputDir = "C:\IncidentResponse\$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+# Ensure the script is running with administrative privileges
+if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Error "Please run this script as an Administrator."
+    exit
+}
+
+# Parameterize the output directory and log file path
+param(
+    [string]$outputDir = "C:\IncidentResponse\$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+)
+
+# Create the output directory
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 # Initialize the log file
 $logFile = "$outputDir\script_log.txt"
 Start-Transcript -Path $logFile -Append
+
+# Global error logging function
+function Log-Error {
+    param (
+        [string] $Message,
+        [string] $LogFile = "$outputDir\error_log.txt"
+    )
+    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
+}
 
 # Function to calculate file hash
 function Get-FileHash {
@@ -21,81 +40,81 @@ function Get-FileHash {
     }
 }
 
-# Global error logging function
-function Log-Error {
-    param (
-        [string] $Message,
-        [string] $LogFile = "C:\IncidentResponse\error_log.txt"
-    )
-    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
-}
-
 # Core Parallel Processing
-# This section is using parallel processing to run multiple tasks concurrently to save time.
 $jobs = @()
 
 # Collect system information
 $jobs += Start-Job -ScriptBlock {
-    $systemInfo = @{
-        "Hostname"             = $env:COMPUTERNAME
-        "OS Version"           = (Get-WmiObject -Class Win32_OperatingSystem).Caption
-        "Uptime"               = (Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
-        "Installed Software"   = Get-WmiObject -Class Win32_Product | Select-Object Name, Version, InstallDate
-        "Running Processes"    = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}
-        "Network Configuration"= Get-NetIPConfiguration
+    param($outputDir)
+    try {
+        $systemInfo = @{
+            "Hostname"             = $env:COMPUTERNAME
+            "OS Version"           = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+            "Uptime"               = (Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+            "Installed Software"   = Get-WmiObject -Class Win32_Product | Select-Object Name, Version, InstallDate
+            "Running Processes"    = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}
+            "Network Configuration"= Get-NetIPConfiguration
+        }
+        $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
+    } catch {
+        Log-Error "Error collecting system information - $_" "$outputDir\error_log.txt"
     }
-    $systemInfo | ConvertTo-Json | Out-File -FilePath "$using:outputDir\SystemInfo.json"
 } -ArgumentList $outputDir
 
 # Collect startup items
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $startupItems = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -Property Command, Description, User, Location, Name
-        $startupItems | ConvertTo-Json | Out-File -FilePath "$using:outputDir\StartupItems.json"
+        $startupItems | ConvertTo-Json | Out-File -FilePath "$outputDir\StartupItems.json"
     } catch {
-        Log-Error "Error collecting startup items - $_"
+        Log-Error "Error collecting startup items - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect information about local users and groups
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $userInfo = @{
             "Local Users"        = Get-LocalUser | Select-Object Name, Enabled, LastLogon
             "User Groups"        = Get-LocalGroup | Select-Object Name, SID
             "Recent User Accounts"= Get-LocalUser | Where-Object {$_.CreateDate -ge (Get-Date).AddDays(-7)} | Select-Object Name, CreateDate
         }
-        $userInfo | ConvertTo-Json | Out-File -FilePath "$using:outputDir\UserInfo.json"
+        $userInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\UserInfo.json"
     } catch {
-        Log-Error "Error collecting user and group information - $_"
+        Log-Error "Error collecting user and group information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect event logs for the last 24 hours
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $eventLogs = @("Security", "System", "Application")
         foreach ($log in $eventLogs) {
             $events = Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=(Get-Date).AddHours(-24)} -ErrorAction SilentlyContinue
-            $events | Export-Csv -Path "$using:outputDir\$log.csv" -NoTypeInformation
+            $events | Export-Csv -Path "$outputDir\$log.csv" -NoTypeInformation
         }
     } catch {
-        Log-Error "Error collecting event logs - $_"
+        Log-Error "Error collecting event logs - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect current network connections
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $networkConnections = Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess
-        $networkConnections | ConvertTo-Json | Out-File -FilePath "$using:outputDir\NetworkConnections.json"
+        $networkConnections | ConvertTo-Json | Out-File -FilePath "$outputDir\NetworkConnections.json"
     } catch {
-        Log-Error "Error collecting network connections - $_"
+        Log-Error "Error collecting network connections - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect registry startup items
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $registryKeys = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -106,38 +125,41 @@ $jobs += Start-Job -ScriptBlock {
         foreach ($key in $registryKeys) {
             $keyName = $key.Split("\")[-1]
             $keyValues = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-            $keyValues | ConvertTo-Json | Out-File -FilePath "$using:outputDir\Registry_$keyName.json"
+            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName.json"
         }
     } catch {
-        Log-Error "Error collecting registry data - $_"
+        Log-Error "Error collecting registry data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Export Shimcache data
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
-        $shimcacheFile = "$using:outputDir\Shimcache.reg"
+        $shimcacheFile = "$outputDir\Shimcache.reg"
         & reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
     } catch {
-        Log-Error "Error collecting Shimcache data - $_"
+        Log-Error "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect recent files from critical directories
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $criticalDirs = @("C:\Windows\System32", "C:\Windows\SysWOW64", "C:\Users\Public")
         foreach ($dir in $criticalDirs) {
             $recentFiles = Get-ChildItem -Path $dir -Recurse -File | Where-Object {$_.LastWriteTime -ge (Get-Date).AddHours(-24)}
-            $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$using:outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation
+            $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation
         }
     } catch {
-        Log-Error "Error collecting file system data - $_"
+        Log-Error "Error collecting file system data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect cookies from browsers for further analysis
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $cookiePaths = @(
             "C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\Cookies",
@@ -148,27 +170,29 @@ $jobs += Start-Job -ScriptBlock {
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $using:outputDir -Force
         }
     } catch {
-        Log-Error "Error collecting browser cookies - $_"
+        Log-Error "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect scheduled tasks information
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $scheduledTasks = Get-ScheduledTask | Select-Object TaskName, TaskPath, State, LastRunTime, NextRunTime, Actions
-        $scheduledTasks | ConvertTo-Json | Out-File -FilePath "$using:outputDir\ScheduledTasks.json"
+        $scheduledTasks | ConvertTo-Json | Out-File -FilePath "$outputDir\ScheduledTasks.json"
     } catch {
-        Log-Error "Error collecting scheduled tasks - $_"
+        Log-Error "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Gather detailed information about services, including their status and configs
 $jobs += Start-Job -ScriptBlock {
+    param($outputDir)
     try {
         $servicesInfo = Get-Service | Select-Object Name, DisplayName, Status, StartType, @{Name="Path";Expression={(Get-WmiObject -Class Win32_Service -Filter "Name='$($_.Name)'").PathName}}
-        $servicesInfo | ConvertTo-Json | Out-File -FilePath "$using:outputDir\ServicesInfo.json"
+        $servicesInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\ServicesInfo.json"
     } catch {
-        Log-Error "Error collecting service information - $_"
+        Log-Error "Error collecting service information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -189,7 +213,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error collecting artifact data - $_"
+    Log-Error "Error collecting artifact data - $_" "$outputDir\error_log.txt"
 }
 
 # Firefox Extension Collection
@@ -197,24 +221,24 @@ try {
     $firefoxExtensions = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\extensions\*" -ErrorAction SilentlyContinue
     $firefoxExtensions | Select-Object FullName | ConvertTo-Json | Out-File -FilePath "$outputDir\FirefoxExtensions.json"
 } catch {
-    Log-Error "Error collecting Firefox extensions - $_"
+    Log-Error "Error collecting Firefox extensions - $_" "$outputDir\error_log.txt"
 }
 
 # Google Chrome Extension Collection
 try {
     $UserPaths = (Get-WmiObject win32_userprofile | Where-Object localpath -notmatch 'Windows').localpath
     foreach ($Path in $UserPaths) {
-        $ExtPath = $Path + '\' + '\AppData\Local\Google\Chrome\User Data\Default\Extensions'
+        $ExtPath = $Path + '\AppData\Local\Google\Chrome\User Data\Default\Extensions'
         if (Test-Path $ExtPath) {
             $Username = $Path | Split-Path -Leaf
-            $ExtFolders = Get-Childitem $ExtPath | Where-Object Name -ne 'Temp'
+            $ExtFolders = Get-ChildItem $ExtPath | Where-Object Name -ne 'Temp'
             foreach ($Folder in $ExtFolders) {
-                $VerFolders = Get-Childitem $Folder.FullName
+                $VerFolders = Get-ChildItem $Folder.FullName
                 foreach ($Version in $VerFolders) {
                     if (Test-Path -Path ($Version.FullName + '\manifest.json')) {
                         $Manifest = Get-Content ($Version.FullName + '\manifest.json') | ConvertFrom-Json
                         if ($Manifest.name -like '__MSG*') {
-                            $AppId = ($Manifest.name -replace '__MSG_','').Trim('_')
+                            $AppId = ($Manifest.name -replace '__MSG_', '').Trim('_')
                             @('\_locales\en_US\', '\_locales\en\') | ForEach-Object {
                                 if (Test-Path -Path ($Version.Fullname + $_ + 'messages.json')) {
                                     $AppManifest = Get-Content ($Version.Fullname + $_ + 'messages.json') | ConvertFrom-Json
@@ -238,7 +262,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error collecting Google Chrome extensions - $_"
+    Log-Error "Error collecting Google Chrome extensions - $_" "$outputDir\error_log.txt"
 }
 
 # Chrome History Collection
@@ -246,7 +270,7 @@ try {
     $chromeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\History" -ErrorAction SilentlyContinue
     $chromeHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Chrome history - $_"
+    Log-Error "Error collecting Chrome history - $_" "$outputDir\error_log.txt"
 }
 
 # Firefox History Collection
@@ -254,7 +278,7 @@ try {
     $firefoxHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite" -ErrorAction SilentlyContinue
     $firefoxHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Firefox history - $_"
+    Log-Error "Error collecting Firefox history - $_" "$outputDir\error_log.txt"
 }
 
 # Microsoft Edge History Collection
@@ -262,7 +286,7 @@ try {
     $edgeHistoryFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\History" -ErrorAction SilentlyContinue
     $edgeHistoryFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Microsoft Edge history - $_"
+    Log-Error "Error collecting Microsoft Edge history - $_" "$outputDir\error_log.txt"
 }
 
 # Search for Password Files
@@ -270,7 +294,7 @@ try {
     $passwordFiles = Get-ChildItem -Path C:\ -Include *password* -File -Recurse -ErrorAction SilentlyContinue
     $passwordFiles | Select-Object FullName, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | ConvertTo-Json | Out-File -FilePath "$outputDir\PasswordFiles.json"
 } catch {
-    Log-Error "Error searching for password files - $_"
+    Log-Error "Error searching for password files - $_" "$outputDir\error_log.txt"
 }
 
 # User PowerShell History
@@ -282,7 +306,7 @@ try {
         Get-Content $Past | Out-File -FilePath "$outputDir\PowerShellHistory_$($Past.Split('\')[-2]).txt"
     }
 } catch {
-    Log-Error "Error collecting user PowerShell history - $_"
+    Log-Error "Error collecting user PowerShell history - $_" "$outputDir\error_log.txt"
 }
 
 # Prefetch Files Collection
@@ -290,7 +314,7 @@ try {
     $prefetchFiles = Get-ChildItem -Path "C:\Windows\Prefetch" -ErrorAction SilentlyContinue
     $prefetchFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting prefetch files - $_"
+    Log-Error "Error collecting prefetch files - $_" "$outputDir\error_log.txt"
 }
 
 # Jump Lists Collection
@@ -298,7 +322,7 @@ try {
     $jumpListFiles = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations" -ErrorAction SilentlyContinue
     $jumpListFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting jump list files - $_"
+    Log-Error "Error collecting jump list files - $_" "$outputDir\error_log.txt"
 }
 
 # Windows Timeline Collection
@@ -309,7 +333,7 @@ try {
     $timelineFiles = Get-ChildItem -Path "C:\Users\*\AppData\Local\ConnectedDevicesPlatform\*\ActivitiesCache.db" -ErrorAction SilentlyContinue
     $timelineFiles | Copy-Item -Destination $outputDir -Force
 } catch {
-    Log-Error "Error collecting Windows Timeline data - $_"
+    Log-Error "Error collecting Windows Timeline data - $_" "$outputDir\error_log.txt"
 }
 
 # Hashing of Collected Files
@@ -322,7 +346,7 @@ try {
         }
     }
 } catch {
-    Log-Error "Error calculating hashes for collected files - $_"
+    Log-Error "Error calculating hashes for collected files - $_" "$outputDir\error_log.txt"
 }
 
 # Compress and Timestamp Output
@@ -331,7 +355,7 @@ try {
     Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
     Remove-Item -Path $outputDir -Recurse -Force
 } catch {
-    Log-Error "Error compressing output directory - $_"
+    Log-Error "Error compressing output directory - $_" "$outputDir\error_log.txt"
 }
 
 # Stop logging
