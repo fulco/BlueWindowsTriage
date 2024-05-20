@@ -87,19 +87,21 @@ $jobs += Start-Job -ScriptBlock {
     }
 } -ArgumentList $outputDir
 
-# Collect event logs for the last 24 hours
-$jobs += Start-Job -ScriptBlock {
-    param($outputDir)
+# Collect event logs for the last 24 hours in parallel
+$eventLogs = @("Security", "Application", "System")
+$logScriptBlock = {
+    param($logName, $outputDir)
     try {
-        $eventLogs = @("Security", "System", "Application")
-        foreach ($log in $eventLogs) {
-            $events = Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=(Get-Date).AddHours(-24)} -ErrorAction SilentlyContinue
-            $events | Export-Csv -Path "$outputDir\$log.csv" -NoTypeInformation
-        }
+        $startTime = (Get-Date).AddHours(-24)
+        $events = Get-WinEvent -FilterHashtable @{LogName = $logName; StartTime = $startTime} -ErrorAction SilentlyContinue
+        $events | Export-Csv -Path "$outputDir\${logName}.csv" -NoTypeInformation
     } catch {
-        Write-Output-error  "Error collecting event logs - $_" "$outputDir\error_log.txt"
+        Write-Output-error "Error collecting event logs for $logName - $_" "$outputDir\error_log.txt"
     }
-} -ArgumentList $outputDir
+}
+foreach ($log in $eventLogs) {
+    Start-Job -ScriptBlock $logScriptBlock -ArgumentList $log, $outputDir
+}
 
 # Collect current network connections
 $jobs += Start-Job -ScriptBlock {
