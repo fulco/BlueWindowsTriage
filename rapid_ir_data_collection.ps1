@@ -342,11 +342,17 @@ try {
 
 # Prefetch Files Collection
 try {
-    $prefetchFiles = Get-ChildItem -Path "C:\Windows\Prefetch" -ErrorAction SilentlyContinue
-    $prefetchFiles | Copy-Item -Destination $outputDir -Force
+    # Create a subdirectory for prefetch files
+    $prefetchDir = "$outputDir\\PreFetch"
+    New-Item -ItemType Directory -Path $prefetchDir -Force | Out-Null
+    
+    # Collect prefetch files
+    $prefetchFiles = Get-ChildItem -Path "C:\\Windows\\Prefetch" -ErrorAction SilentlyContinue
+    $prefetchFiles | Copy-Item -Destination $prefetchDir -Force
 } catch {
-    Write-Output-error  "Error collecting prefetch files - $_" "$outputDir\error_log.txt"
+    Write-Output-error "Error collecting prefetch files - $_" "$outputDir\\error_log.txt"
 }
+
 
 # Jump Lists Collection
 try {
@@ -383,12 +389,26 @@ try {
 
 # Compress and Timestamp Output
 try {
+    $tempDir = "$outputDir\\temp"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+    Write-Output "Copying files to temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
+    Get-ChildItem -Path $outputDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination $tempDir -Recurse -Force
+        Write-Output "Copied: $($_.FullName)" | Add-Content -Path "$outputDir\\script_log.txt"
+    }
+
     $zipFile = "$outputDir.zip"
-    Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
-    Remove-Item -Path $outputDir -Recurse -Force
+    Write-Output "Compressing temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
+    Compress-Archive -Path $tempDir -DestinationPath $zipFile -Force
+
+    Write-Output "Removing temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
+    Remove-Item -Path $tempDir -Recurse -Force
 } catch {
-    Write-Output-error  "Error compressing output directory - $_" "$outputDir\error_log.txt"
+    Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
+    Write-Output "Error details: $_" | Add-Content -Path "$outputDir\\script_log.txt"
 }
+
 
 # Stop logging
 Stop-Transcript
