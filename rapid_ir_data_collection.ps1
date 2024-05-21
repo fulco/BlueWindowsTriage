@@ -389,25 +389,37 @@ try {
 
 # Compress and Timestamp Output
 try {
+    # Create a temporary directory for compression
     $tempDir = "$outputDir\\temp"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-    Write-Output "Copying files to temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
+    # Copy all files to the temporary directory
     Get-ChildItem -Path $outputDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $tempDir -Recurse -Force
-        Write-Output "Copied: $($_.FullName)" | Add-Content -Path "$outputDir\\script_log.txt"
     }
 
+    # Compress the temporary directory
     $zipFile = "$outputDir.zip"
-    Write-Output "Compressing temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
     Compress-Archive -Path $tempDir -DestinationPath $zipFile -Force
 
-    Write-Output "Removing temporary directory..." | Add-Content -Path "$outputDir\\script_log.txt"
+    # Verify zip file creation and content
+    if (Test-Path -Path $zipFile) {
+        $zipFileInfo = Get-Item -Path $zipFile
+        if ($zipFileInfo.Length -gt 0) {
+            Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\\script_log.txt"
+        } else {
+            Write-Output-error "Zip file was created but is empty." "$outputDir\\error_log.txt"
+        }
+    } else {
+        Write-Output-error "Zip file was not created." "$outputDir\\error_log.txt"
+    }
+
+    # Clean up temporary directory
     Remove-Item -Path $tempDir -Recurse -Force
 } catch {
     Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
-    Write-Output "Error details: $_" | Add-Content -Path "$outputDir\\script_log.txt"
 }
+
 
 
 # Stop logging
