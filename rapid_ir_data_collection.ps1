@@ -4,6 +4,9 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     exit
 }
 
+# Record the start time
+$scriptStartTime = Get-Date
+
 # Parameterize the output directory and log file path
 param(
     [string]$outputDir = "C:\IncidentResponse\$(Get-Date -Format 'yyyyMMdd_HHmmss')"
@@ -420,7 +423,10 @@ try {
     Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
 }
 
-
-
 # Stop logging
 Stop-Transcript
+
+# Calculate and log total script execution time
+$scriptEndTime = Get-Date
+$executionTime = $scriptEndTime - $scriptStartTime
+Write-Output "Total script execution time: $executionTime" | Add-Content -Path "$outputDir\\script_log.txt"
