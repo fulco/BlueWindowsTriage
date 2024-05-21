@@ -27,11 +27,11 @@ This PowerShell script is designed to perform rapid initial data collection on a
 ## Usage
 
 1. Download the script file `BlueWindowsTriage.ps1` to your local machine.
-2. Open a PowerShell console with administrative privileges.
+2. Open a Command console with administrative privileges.
 3. Navigate to the directory where the script file is located.
 4. Execute the script by running the following command:
    ```
-   .\BlueWindowsTriage.ps1
+   powershell -ExecutionPolicy Bypass .\BlueWindowsTriage.ps1
    ```
 5. The script will create a timestamped output directory in the format `C:\IncidentResponse\yyyyMMdd_HHmmss`.
 6. The collected data will be saved in various formats (JSON, CSV, TXT) within the output directory.
