@@ -97,11 +97,6 @@ function Export-RegistryKey {
     }
 }
 
-# Collect application and security event logs
-Collect-EventLogs -logName "Application" -outputFile "$outputDir\application_events.txt"
-Collect-EventLogs -logName "Security" -outputFile "$outputDir\security_events.txt"
-Collect-EventLogs -logName "System" -outputFile "$outputDir\system_events.txt"
-
 # Core Parallel Processing
 $jobs = @()
 
@@ -180,18 +175,16 @@ $jobs += Start-Job -ScriptBlock {
 
 
 # Collect event logs in parallel
-$tempfolderPath = "C:\temp"
 # Collect application logs
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$tempfolderPath\Application.evtx"
+    $tempEvtxPath = "$outputDir\Application.evtx"
     try {
         wevtutil epl Application $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
         $eventLogs = Get-WinEvent -Path $tempEvtxPath
-        $eventLogs | Out-File -FilePath "$outputDir\\application_events.txt" -Append
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -207,12 +200,11 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$tempfolderPath\Security.evtx"
+    $tempEvtxPath = "$outputDir\Security.evtx"
     try {
         wevtutil epl Security $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path $tempEvtxPath
-        $eventLogs | Out-File -FilePath "$outputDir\\security_events.txt" -Append
+        $eventLogs = Get-WinEvent -Path $tempEvtxPath 
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -228,12 +220,11 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$tempfolderPath\System.evtx"
+    $tempEvtxPath = "$outputDir\System.evtx"
     try {
         wevtutil epl System $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path $tempEvtxPath
-        $eventLogs | Out-File -FilePath "$outputDir\\system_events.txt" -Append
+        $eventLogs = Get-WinEvent -Path
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -243,8 +234,6 @@ $jobs += Start-Job -ScriptBlock {
         }
     }
 } -ArgumentList $outputDir
-
-Remove-Item -Path $tempfolderPath -Recurse -Force
 
 # Collect current network connections
 $jobs += Start-Job -ScriptBlock {
@@ -265,8 +254,7 @@ $jobs += Start-Job -ScriptBlock {
         }
     }
 } -ArgumentList $outputDir
-  
-Remove-Item -Path $folderPath -Recurse -Force
+
 # Collect registry startup items
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
@@ -658,14 +646,48 @@ try {
 
 
 # Compress and Timestamp Output
+$maxRetries = 5
+$retryDelay = 10  # seconds
+
+function Try-Copy-Item {
+    param (
+        [string]$sourcePath,
+        [string]$destinationPath,
+        [int]$retries,
+        [int]$delay,
+        [string]$logFile
+    )
+    $attempt = 0
+    $success = $false
+    while ($attempt -lt $retries -and -not $success) {
+        try {
+            Copy-Item -Path $sourcePath -Destination $destinationPath -Recurse -Force
+            $success = $true
+        } catch {
+            $attempt++
+            if ($attempt -lt $retries) {
+                Start-Sleep -Seconds $delay
+            } else {
+                # Log the error and continue
+                $logMutex.WaitOne() | Out-Null
+                try {
+                    Write-Output "Failed to copy $sourcePath to $destinationPath after $attempt attempts: $_" | Add-Content -Path $logFile
+                } finally {
+                    $logMutex.ReleaseMutex() | Out-Null
+                }
+            }
+        }
+    }
+}
+
 try {
     # Create a temporary directory for compression
-    $tempDir = "$outputDir\\temp"
+    $tempDir = "$outputDir\temp"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-    # Copy all files to the temporary directory
+    # Copy all files to the temporary directory with retry logic
     Get-ChildItem -Path $outputDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination $tempDir -Recurse -Force
+        Try-Copy-Item -sourcePath $_.FullName -destinationPath $tempDir -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
     }
 
     # Compress the temporary directory
@@ -678,14 +700,14 @@ try {
         if ($zipFileInfo.Length -gt 0) {
             $logMutex.WaitOne() | Out-Null
             try {
-                Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\\script_log.txt"
+                Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\script_log.txt"
             } finally {
                 $logMutex.ReleaseMutex() | Out-Null
             }
         } else {
             $logMutex.WaitOne() | Out-Null
             try {
-                Write-Output-error "Zip file was created but is empty." "$outputDir\\error_log.txt"
+                Write-Output-error "Zip file was created but is empty." "$outputDir\error_log.txt"
             } finally {
                 $logMutex.ReleaseMutex() | Out-Null
             }
@@ -693,7 +715,7 @@ try {
     } else {
         $logMutex.WaitOne() | Out-Null
         try {
-            Write-Output-error "Zip file was not created." "$outputDir\\error_log.txt"
+            Write-Output-error "Zip file was not created." "$outputDir\error_log.txt"
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
         }
@@ -704,7 +726,7 @@ try {
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
-        Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
+        Write-Output-error "Error compressing output directory - $_" "$outputDir\error_log.txt"
     } finally {
         $logMutex.ReleaseMutex() | Out-Null
     }
