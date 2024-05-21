@@ -45,7 +45,7 @@ function Write-Output-error {
 }
 
 # Ensure any remaining errors are logged at the end of the script
-function Flush-ErrorLog {
+function Clear-ErrorLog {
     if ($global:errorList -and $global:errorList.Count -gt 0) {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -753,3 +753,4 @@ try {
 } finally {
     $logMutex.ReleaseMutex() | Out-Null
 }
+Clear-ErrorLog
