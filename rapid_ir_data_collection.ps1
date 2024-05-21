@@ -22,6 +22,29 @@ Start-Transcript -Path $logFile -Append
 # Initialize a mutex for synchronized logging
 $logMutex = New-Object System.Threading.Mutex($false, "LogMutex")
 
+# Function to collect event logs with mutex logging
+function Collect-EventLogs {
+    param (
+        [string]$logName,
+        [string]$outputFile
+    )
+
+    try {
+        $tempEvtxPath = "C:\Temp\$logName.evtx"
+        wevtutil epl $logName $tempEvtxPath /ow:true
+        Start-Sleep -Seconds 10
+        $eventLogs = Get-WinEvent -Path $tempEvtxPath
+        $eventLogs | Out-File -FilePath $outputFile -Append
+    } catch {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Write-Output "Error collecting $logName logs: $_" | Add-Content -Path "$outputDir\error_log.txt"
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
+    }
+}
+
 # Global error logging function with batch processing to reduce call depth
 function Write-Output-error {
     param (
@@ -34,12 +57,12 @@ function Write-Output-error {
     }
     $global:errorList += "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
     if ($global:errorList.Count -gt 100) {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             $global:errorList | Add-Content -Path $LogFile
             $global:errorList.Clear()
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 }
@@ -47,12 +70,12 @@ function Write-Output-error {
 # Ensure any remaining errors are logged at the end of the script
 function Flush-ErrorLog {
     if ($global:errorList -and $global:errorList.Count -gt 0) {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             $global:errorList | Add-Content -Path "$outputDir\\error_log.txt"
             $global:errorList.Clear()
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 }
@@ -71,6 +94,11 @@ function Get-FileHashSafely {
         return $null
     }
 }
+
+# Collect application and security event logs
+Collect-EventLogs -logName "Application" -outputFile "$outputDir\application_events.txt"
+Collect-EventLogs -logName "Security" -outputFile "$outputDir\security_events.txt"
+Collect-EventLogs -logName "System" -outputFile "$outputDir\system_events.txt"
 
 # Core Parallel Processing
 $jobs = @()
@@ -93,11 +121,11 @@ $jobs += Start-Job -ScriptBlock {
         }
         $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting system information - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -114,11 +142,11 @@ $jobs += Start-Job -ScriptBlock {
         $startupItems = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -Property Command, Description, User, Location, Name
         $startupItems | ConvertTo-Json | Out-File -FilePath "$outputDir\StartupItems.json"
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting startup items - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -139,11 +167,11 @@ $jobs += Start-Job -ScriptBlock {
         }
         $userInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\UserInfo.json"
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting user and group information - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -164,11 +192,11 @@ $jobs += Start-Job -ScriptBlock {
         $eventLogs = Get-WinEvent -Path $tempEvtxPath
         $eventLogs | Out-File -FilePath "$outputDir\\application_events.txt" -Append
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error -Message "Failed to collect Application event logs: $_"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -188,11 +216,11 @@ $jobs += Start-Job -ScriptBlock {
         $eventLogs = Get-WinEvent -Path $tempEvtxPath
         $eventLogs | Out-File -FilePath "$outputDir\\security_events.txt" -Append
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error -Message "Failed to collect security event logs: $_"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -212,11 +240,11 @@ $jobs += Start-Job -ScriptBlock {
         $eventLogs = Get-WinEvent -Path $tempEvtxPath
         $eventLogs | Out-File -FilePath "$outputDir\\system_events.txt" -Append
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error -Message "Failed to collect system event logs: $_"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -234,11 +262,11 @@ $jobs += Start-Job -ScriptBlock {
         $networkConnections = Get-NetTCPConnection | Select-Object State, LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess
         $networkConnections | Export-Csv -Path "$outputDir\\NetworkConnections.csv" -NoTypeInformation
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting network connections - $_"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -264,11 +292,11 @@ $jobs += Start-Job -ScriptBlock {
             $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName.json"
         }
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting registry data - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -285,11 +313,11 @@ $jobs += Start-Job -ScriptBlock {
         $shimcacheFile = "$outputDir\Shimcache.reg"
         & reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -309,11 +337,11 @@ $jobs += Start-Job -ScriptBlock {
             $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation
         }
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting file system data - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -336,11 +364,11 @@ $jobs += Start-Job -ScriptBlock {
             Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $using:outputDir -Force
         }
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -357,11 +385,11 @@ $jobs += Start-Job -ScriptBlock {
         $scheduledTasks = Get-ScheduledTask | Select-Object TaskName, TaskPath, State, LastRunTime, NextRunTime, Actions
         $scheduledTasks | ConvertTo-Json | Out-File -FilePath "$outputDir\ScheduledTasks.json"
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -378,11 +406,11 @@ $jobs += Start-Job -ScriptBlock {
         $servicesInfo = Get-Service | Select-Object Name, DisplayName, Status, StartType, @{Name="Path";Expression={(Get-WmiObject -Class Win32_Service -Filter "Name='$($_.Name)'").PathName}}
         $servicesInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\ServicesInfo.json"
     } catch {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting service information - $_" "$outputDir\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
@@ -403,11 +431,11 @@ try {
         Copy-Item -Path $_ -Destination "$outputDir\\Artifacts" -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting artifacts - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -433,11 +461,11 @@ try {
         $_ | Out-File -FilePath "$outputDir\\FirefoxExtensions.txt" -Append -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Firefox extensions - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -463,11 +491,11 @@ try {
         $_ | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Google Chrome extensions - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -481,11 +509,11 @@ try {
         Copy-Item -Path $_.FullName -Destination "$outputDir\\ChromeHistory" -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Chrome history - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -498,11 +526,11 @@ try {
         Copy-Item -Path $_.FullName -Destination "$outputDir\\FirefoxHistory" -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Firefox history - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -515,11 +543,11 @@ try {
         Copy-Item -Path $_.FullName -Destination "$outputDir\\EdgeHistory" -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Microsoft Edge history - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -531,11 +559,11 @@ try {
         Copy-Item -Path $_.FullName -Destination "$outputDir\\PasswordFiles" -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error searching for password files - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -550,11 +578,11 @@ try {
         Copy-Item -Path $_.FullName -Destination $destinationPath -Force
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting PowerShell history - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -569,11 +597,11 @@ try {
     $prefetchFiles = Get-ChildItem -Path "C:\\Windows\\Prefetch" -ErrorAction SilentlyContinue
     $prefetchFiles | Copy-Item -Destination $prefetchDir -Force
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting prefetch files - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -583,11 +611,11 @@ try {
     $jumpListFiles = Get-ChildItem -Path "C:\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\AutomaticDestinations" -ErrorAction SilentlyContinue
     $jumpListFiles | Copy-Item -Destination "$outputDir\\JumpLists" -Force
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting jump list files - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -600,11 +628,11 @@ try {
     $timelineFiles = Get-ChildItem -Path "C:\\Users\\*\\AppData\\Local\\ConnectedDevicesPlatform\\*\\ActivitiesCache.db" -ErrorAction SilentlyContinue
     $timelineFiles | Copy-Item -Destination "$outputDir\\WindowsTimeline" -Force
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error collecting Windows Timeline data - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -614,20 +642,20 @@ try {
     foreach ($file in $collectedFiles) {
         $hash = Get-FileHashSafely -FilePath $file.FullName
         if ($hash) {
-            $logMutex.WaitOne()
+            $logMutex.WaitOne() | Out-Null
             try {
                 Add-Content -Path "$outputDir\\Hashes.csv" -Value "$($file.FullName),$hash"
             } finally {
-                $logMutex.ReleaseMutex()
+                $logMutex.ReleaseMutex() | Out-Null
             }
         }
     }
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error calculating hashes for collected files - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
@@ -651,50 +679,58 @@ try {
     if (Test-Path -Path $zipFile) {
         $zipFileInfo = Get-Item -Path $zipFile
         if ($zipFileInfo.Length -gt 0) {
-            $logMutex.WaitOne()
+            $logMutex.WaitOne() | Out-Null
             try {
                 Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\\script_log.txt"
             } finally {
-                $logMutex.ReleaseMutex()
+                $logMutex.ReleaseMutex() | Out-Null
             }
         } else {
-            $logMutex.WaitOne()
+            $logMutex.WaitOne() | Out-Null
             try {
                 Write-Output-error "Zip file was created but is empty." "$outputDir\\error_log.txt"
             } finally {
-                $logMutex.ReleaseMutex()
+                $logMutex.ReleaseMutex() | Out-Null
             }
         }
     } else {
-        $logMutex.WaitOne()
+        $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Zip file was not created." "$outputDir\\error_log.txt"
         } finally {
-            $logMutex.ReleaseMutex()
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 
     # Clean up temporary directory
     Remove-Item -Path $tempDir -Recurse -Force
 } catch {
-    $logMutex.WaitOne()
+    $logMutex.WaitOne() | Out-Null
     try {
         Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
     } finally {
-        $logMutex.ReleaseMutex()
+        $logMutex.ReleaseMutex() | Out-Null
     }
 }
 
 
 # Stop logging
-Stop-Transcript
+Stop-Transcript | Out-Null
 
-# Calculate and log total script execution time
+# Calculate and log total script execution time in a readable format
 $scriptEndTime = Get-Date
 $executionTime = $scriptEndTime - $scriptStartTime
-$logMutex.WaitOne()
+
+# Translate execution time to a readable format
+$days = $executionTime.Days
+$hours = $executionTime.Hours
+$minutes = $executionTime.Minutes
+$seconds = $executionTime.Seconds
+$readableExecutionTime = "$days days, $hours hours, $minutes minutes, $seconds seconds"
+
+$logMutex.WaitOne() | Out-Null
 try {
-    Write-Output "Total script execution time: $executionTime" | Add-Content -Path "$outputDir\\script_log.txt"
+    Write-Output "Total script execution time: $readableExecutionTime" | Add-Content -Path "$outputDir\script_log.txt"
 } finally {
-    $logMutex.ReleaseMutex()
+    $logMutex.ReleaseMutex() | Out-Null
 }
