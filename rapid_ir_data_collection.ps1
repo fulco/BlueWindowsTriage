@@ -16,17 +16,33 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $logFile = "$outputDir\script_log.txt"
 Start-Transcript -Path $logFile -Append
 
-# Global error logging function
-function Write-Output-error  {
+# Global error logging function with batch processing to reduce call depth
+function Write-Output-error {
     param (
         [string] $Message,
         [string] $LogFile = "$outputDir\error_log.txt"
     )
-    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
+    # Collect errors in a list and log them periodically to avoid frequent I/O operations
+    if (-not $global:errorList) {
+        $global:errorList = @()
+    }
+    $global:errorList += "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
+    if ($global:errorList.Count -gt 100) {
+        $global:errorList | Add-Content -Path $LogFile
+        $global:errorList.Clear()
+    }
 }
 
-# Function to calculate file hash
-function Get-FileHash {
+# Ensure any remaining errors are logged at the end of the script
+function Flush-ErrorLog {
+    if ($global:errorList -and $global:errorList.Count -gt 0) {
+        $global:errorList | Add-Content -Path "$outputDir\error_log.txt"
+        $global:errorList.Clear()
+    }
+}
+
+# Function to calculate file hash with error handling and no recursion
+function Get-FileHashSafely {
     param(
         [string]$FilePath,
         [string]$Algorithm = 'SHA256'
@@ -35,10 +51,11 @@ function Get-FileHash {
         $hash = Get-FileHash -Path $FilePath -Algorithm $Algorithm -ErrorAction Stop
         return $hash.Hash
     } catch {
-        Write-Output-error  "Error calculating hash for file: $FilePath - $_"
+        Write-Output-error "Error calculating hash for file: $FilePath - $_"
         return $null
     }
 }
+
 
 # Core Parallel Processing
 $jobs = @()
@@ -135,12 +152,12 @@ $jobs += Start-Job -ScriptBlock {
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
     try {
-        $networkConnections = Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess
-        $networkConnections | ConvertTo-Json | Out-File -FilePath "$outputDir\NetworkConnections.json"
+        $networkConnections = Get-NetTCPConnection | Select-Object State, LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess
+        $networkConnections | Export-Csv -Path "$outputDir\\NetworkConnections.csv" -NoTypeInformation
     } catch {
-        Write-Output-error  "Error collecting network connections - $_" "$outputDir\error_log.txt"
+        Write-Output-error "Error collecting network connections - $_"
     }
-} -ArgumentList $outputDir
+} -ArgumentList $outputDir    
 
 # Collect registry startup items
 $jobs += Start-Job -ScriptBlock {
@@ -256,43 +273,28 @@ try {
 
 # Google Chrome Extension Collection
 try {
-    $UserPaths = (Get-WmiObject win32_userprofile | Where-Object localpath -notmatch 'Windows').localpath
-    foreach ($Path in $UserPaths) {
-        $ExtPath = $Path + '\AppData\Local\Google\Chrome\User Data\Default\Extensions'
-        if (Test-Path $ExtPath) {
-            $ExtFolders = Get-ChildItem $ExtPath | Where-Object Name -ne 'Temp'
-            foreach ($Folder in $ExtFolders) {
-                $VerFolders = Get-ChildItem $Folder.FullName
-                foreach ($Version in $VerFolders) {
-                    if (Test-Path -Path ($Version.FullName + '\manifest.json')) {
-                        $Manifest = Get-Content ($Version.FullName + '\manifest.json') | ConvertFrom-Json
-                        if ($Manifest.name -like '__MSG*') {
-                            $AppId = ($Manifest.name -replace '__MSG_', '').Trim('_')
-                            @('\_locales\en_US\', '\_locales\en\') | ForEach-Object {
-                                if (Test-Path -Path ($Version.Fullname + $_ + 'messages.json')) {
-                                    $AppManifest = Get-Content ($Version.Fullname + $_ + 'messages.json') | ConvertFrom-Json
-                                    @($AppManifest.appName.message, $AppManifest.extName.message, $AppManifest.extensionName.message, $AppManifest.app_name.message, $AppManifest.application_title.message, $AppManifest.$AppId.message) | ForEach-Object {
-                                        if (($_) -and (-not($ExtName))) {
-                                            $ExtName = $_
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            $ExtName = $Manifest.name
-                        }
-                        Write-Output (($Path | Split-Path -Leaf) + ": " + [string] $ExtName + " v" + $Manifest.version + " (" + $Folder.name + ")")
-                        if ($ExtName) {
-                            Remove-Variable -Name ExtName
-                        }
-                    }
-                }
+    $chromeExtensionsPath = "C:\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Extensions"
+    $chromeExtensions = Get-ChildItem -Path $chromeExtensionsPath -Recurse -Directory -ErrorAction SilentlyContinue
+    $extensionOutputList = @()
+    
+    $chromeExtensions | ForEach-Object -Parallel {
+        $manifestPath = "$($_.FullName)\\manifest.json"
+        if (Test-Path -Path $manifestPath) {
+            $extensionInfo = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            [PSCustomObject]@{
+                Id = $_.Name
+                Name = $extensionInfo.name
+                Version = $extensionInfo.version
+                Description = $extensionInfo.description
             }
         }
+    } -ThrottleLimit 10 | ForEach-Object {
+        $_ | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
     }
 } catch {
-    Write-Output-error  "Error collecting Google Chrome extensions - $_" "$outputDir\error_log.txt"
+    Write-Output-error  "Error collecting Google Chrome extensions - $_" "$outputDir\\error_log.txt"
 }
+
 
 # Chrome History Collection
 try {
@@ -369,14 +371,15 @@ try {
 try {
     $collectedFiles = Get-ChildItem -Path $outputDir -File -Recurse
     foreach ($file in $collectedFiles) {
-        $hash = Get-FileHash -FilePath $file.FullName
+        $hash = Get-FileHashSafely -FilePath $file.FullName
         if ($hash) {
-            Add-Content -Path "$outputDir\Hashes.csv" -Value "$($file.FullName),$($hash.Hash)"
+            Add-Content -Path "$outputDir\\Hashes.csv" -Value "$($file.FullName),$hash"
         }
     }
 } catch {
-    Write-Output-error  "Error calculating hashes for collected files - $_" "$outputDir\error_log.txt"
+    Write-Output-error "Error calculating hashes for collected files - $_" "$outputDir\\error_log.txt"
 }
+
 
 # Compress and Timestamp Output
 try {
