@@ -87,21 +87,49 @@ $jobs += Start-Job -ScriptBlock {
     }
 } -ArgumentList $outputDir
 
-# Collect event logs for the last 24 hours in parallel
-$eventLogs = @("Security", "Application", "System")
-$logScriptBlock = {
-    param($logName, $outputDir)
+# Collect event logs in parallel
+# Collect application logs
+$jobs += Start-Job -ScriptBlock {
+    param($outputDir)
+    $tempEvtxPath = "C:\\Temp\\Application.evtx"
     try {
-        $startTime = (Get-Date).AddHours(-24)
-        $events = Get-WinEvent -FilterHashtable @{LogName = $logName; StartTime = $startTime} -ErrorAction SilentlyContinue
-        $events | Export-Csv -Path "$outputDir\${logName}.csv" -NoTypeInformation
+        wevtutil epl Application $tempEvtxPath /ow:true
+        Start-Sleep -Seconds 10
+        $eventLogs = Get-WinEvent -Path $tempEvtxPath
+        $eventLogs | Out-File -FilePath "$outputDir\\application_events.txt" -Append
     } catch {
-        Write-Output-error "Error collecting event logs for $logName - $_" "$outputDir\error_log.txt"
+        Write-Output-error -Message "Failed to collect Application event logs: $_"
     }
-}
-foreach ($log in $eventLogs) {
-    Start-Job -ScriptBlock $logScriptBlock -ArgumentList $log, $outputDir
-}
+} -ArgumentList $outputDir
+
+# Collect security logs
+$jobs += Start-Job -ScriptBlock {
+    param($outputDir)
+    $tempEvtxPath = "C:\\Temp\\Security.evtx"
+    try {
+        wevtutil epl Security $tempEvtxPath /ow:true
+        Start-Sleep -Seconds 10
+        $eventLogs = Get-WinEvent -Path $tempEvtxPath
+        $eventLogs | Out-File -FilePath "$outputDir\\security_events.txt" -Append
+    } catch {
+        Write-Output-error -Message "Failed to collect security event logs: $_"
+    }
+} -ArgumentList $outputDir
+
+# Collect system logs
+$jobs += Start-Job -ScriptBlock {
+    param($outputDir)
+    $tempEvtxPath = "C:\\Temp\\System.evtx"
+    try {
+        wevtutil epl System $tempEvtxPath /ow:true
+        Start-Sleep -Seconds 10
+        $eventLogs = Get-WinEvent -Path $tempEvtxPath
+        $eventLogs | Out-File -FilePath "$outputDir\\system_events.txt" -Append
+    } catch {
+        Write-Output-error -Message "Failed to collect system event logs: $_"
+    }
+} -ArgumentList $outputDir
+
 
 # Collect current network connections
 $jobs += Start-Job -ScriptBlock {
@@ -198,8 +226,8 @@ $jobs += Start-Job -ScriptBlock {
     }
 } -ArgumentList $outputDir
 
-# Wait for all jobs to complete and collect their output
-$jobs | Wait-Job | Receive-Job
+# Wait for all jobs to complete
+$jobs | ForEach-Object { $_ | Wait-Job | Receive-Job }
 $jobs | Remove-Job
 
 # Artifact collection
