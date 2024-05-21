@@ -22,29 +22,6 @@ Start-Transcript -Path $logFile -Append
 # Initialize a mutex for synchronized logging
 $logMutex = New-Object System.Threading.Mutex($false, "LogMutex")
 
-# Function to collect event logs with mutex logging
-function Collect-EventLogs {
-    param (
-        [string]$logName,
-        [string]$outputFile
-    )
-
-    try {
-        $tempEvtxPath = "C:\Temp\$logName.evtx"
-        wevtutil epl $logName $tempEvtxPath /ow:true
-        Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path $tempEvtxPath
-        $eventLogs | Out-File -FilePath $outputFile -Append
-    } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output "Error collecting $logName logs: $_" | Add-Content -Path "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
-    }
-}
-
 # Global error logging function with batch processing to reduce call depth
 function Write-Output-error {
     param (
@@ -92,6 +69,31 @@ function Get-FileHashSafely {
     } catch {
         Write-Output-error "Error calculating hash for file: $FilePath - $_"
         return $null
+    }
+}
+
+function Export-RegistryKey {
+    param (
+        [string]$keyPath,
+        [string]$outputDir
+    )
+
+    $logMutex.WaitOne() | Out-Null
+    try {
+        Write-Output "Exporting registry key: $keyPath" | Add-Content -Path "$outputDir\\script_log.txt"
+    } finally {
+        $logMutex.ReleaseMutex() | Out-Null
+    }
+
+    try {
+        REG EXPORT $keyPath "$outputDir\\$(($keyPath -replace '\\', '_')).reg" /y
+    } catch {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Write-Output "Failed to export registry key: $keyPath. Error: $_" | Add-Content -Path "$outputDir\\error_log.txt"
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
     }
 }
 
@@ -178,14 +180,13 @@ $jobs += Start-Job -ScriptBlock {
 
 
 # Collect event logs in parallel
+$tempfolderPath = "C:\temp"
 # Collect application logs
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
+
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    
-    $tempEvtxPath = "C:\\Temp\\Application.evtx"
+    $tempEvtxPath = "$tempfolderPath\Application.evtx"
     try {
         wevtutil epl Application $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
@@ -194,22 +195,19 @@ $jobs += Start-Job -ScriptBlock {
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
-            Write-Output-error -Message "Failed to collect Application event logs: $_"
+            Write-Output "Failed to collect Application event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
 
-
 # Collect security logs
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
+
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    
-    $tempEvtxPath = "C:\\Temp\\Security.evtx"
+    $tempEvtxPath = "$tempfolderPath\Security.evtx"
     try {
         wevtutil epl Security $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
@@ -218,22 +216,19 @@ $jobs += Start-Job -ScriptBlock {
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
-            Write-Output-error -Message "Failed to collect security event logs: $_"
+            Write-Output "Failed to collect Security event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
 
-
 # Collect system logs
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
+
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    
-    $tempEvtxPath = "C:\\Temp\\System.evtx"
+    $tempEvtxPath = "$tempfolderPath\System.evtx"
     try {
         wevtutil epl System $tempEvtxPath /ow:true
         Start-Sleep -Seconds 10
@@ -242,14 +237,14 @@ $jobs += Start-Job -ScriptBlock {
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
-            Write-Output-error -Message "Failed to collect system event logs: $_"
+            Write-Output "Failed to collect System event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } -ArgumentList $outputDir
 
-
+Remove-Item -Path $tempfolderPath -Recurse -Force
 
 # Collect current network connections
 $jobs += Start-Job -ScriptBlock {
@@ -271,14 +266,14 @@ $jobs += Start-Job -ScriptBlock {
     }
 } -ArgumentList $outputDir
   
-
+Remove-Item -Path $folderPath -Recurse -Force
 # Collect registry startup items
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
     
     # Initialize a mutex for synchronized logging
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-
+	$i = 1
     try {
         $registryKeys = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -289,9 +284,11 @@ $jobs += Start-Job -ScriptBlock {
         foreach ($key in $registryKeys) {
             $keyName = $key.Split("\")[-1]
             $keyValues = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName.json"
+            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName$1.json"
+			$i++
         }
     } catch {
+		$i++
         $logMutex.WaitOne() | Out-Null
         try {
             Write-Output-error "Error collecting registry data - $_" "$outputDir\error_log.txt"
@@ -623,8 +620,8 @@ try {
 # Windows Timeline Collection
 try {
     $timelineRegistry = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ActivityDataModel"
-    $timelineRegistryFile = "$outputDir\\Timeline.reg"
-    & reg export $timelineRegistry $timelineRegistryFile /y
+#    $timelineRegistryFile = "$outputDir\\Timeline.reg"
+    Export-RegistryKey -keyPath $timelineRegistry -outputDir $outputDir
     $timelineFiles = Get-ChildItem -Path "C:\\Users\\*\\AppData\\Local\\ConnectedDevicesPlatform\\*\\ActivitiesCache.db" -ErrorAction SilentlyContinue
     $timelineFiles | Copy-Item -Destination "$outputDir\\WindowsTimeline" -Force
 } catch {
