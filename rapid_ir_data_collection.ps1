@@ -113,7 +113,8 @@ $jobs += Start-Job -ScriptBlock {
             "OS Version"           = (Get-WmiObject -Class Win32_OperatingSystem).Caption
             "Uptime"               = (Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
             "Installed Software"   = Get-WmiObject -Class Win32_Product | Select-Object Name, Version, InstallDate
-            "Running Processes"    = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}
+            # "Running Processes"  = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}
+            "Running Processes"    = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}, @{Name="ExecutablePath";Expression={$_.Path}}
             "Network Configuration"= Get-NetIPConfiguration
         }
         $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
