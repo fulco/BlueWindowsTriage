@@ -45,7 +45,7 @@ function Write-Output-error {
 }
 
 # Ensure any remaining errors are logged at the end of the script
-function Flush-ErrorLog {
+function Clear-ErrorLog {
     if ($global:errorList -and $global:errorList.Count -gt 0) {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -181,11 +181,9 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\Application.evtx"
+    $tempEvtxPath = "$outputDir\Application_%date%_%time%.evtx"
     try {
-        wevtutil epl Application $tempEvtxPath /ow:true
-        Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path $tempEvtxPath
+        wevtutil epl Application $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -201,11 +199,9 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\Security.evtx"
+    $tempEvtxPath = "$outputDir\Security_%date%_%time%.evtx"
     try {
-        wevtutil epl Security $tempEvtxPath /ow:true
-        Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path $tempEvtxPath 
+        wevtutil epl Security $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -221,11 +217,9 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\System.evtx"
+    $tempEvtxPath = "$outputDir\System_%date%_%time%.evtx"
     try {
-        wevtutil epl System $tempEvtxPath /ow:true
-        Start-Sleep -Seconds 10
-        $eventLogs = Get-WinEvent -Path
+        wevtutil epl System $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -430,8 +424,6 @@ try {
 try {
     $firefoxExtensionsPath = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default\\extensions"
     $firefoxExtensions = Get-ChildItem -Path $firefoxExtensionsPath -Recurse -Directory -ErrorAction SilentlyContinue
-    $extensionOutputList = @()
-    
     $firefoxExtensions | ForEach-Object {
         $manifestPath = "$($_.FullName)\\manifest.json"
         if (Test-Path -Path $manifestPath) {
@@ -460,8 +452,6 @@ try {
 try {
     $chromeExtensionsPath = "C:\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Extensions"
     $chromeExtensions = Get-ChildItem -Path $chromeExtensionsPath -Recurse -Directory -ErrorAction SilentlyContinue
-    $extensionOutputList = @()
-    
     $chromeExtensions | ForEach-Object -Parallel {
         $manifestPath = "$($_.FullName)\\manifest.json"
         if (Test-Path -Path $manifestPath) {
@@ -650,7 +640,7 @@ try {
 $maxRetries = 5
 $retryDelay = 10  # seconds
 
-function Try-Copy-Item {
+function Test-CopyItem {
     param (
         [string]$sourcePath,
         [string]$destinationPath,
@@ -688,7 +678,7 @@ try {
 
     # Copy all files to the temporary directory with retry logic
     Get-ChildItem -Path $outputDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
-        Try-Copy-Item -sourcePath $_.FullName -destinationPath $tempDir -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
+        Test-CopyItem -sourcePath $_.FullName -destinationPath $tempDir -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
     }
 
     # Compress the temporary directory
@@ -754,3 +744,4 @@ try {
 } finally {
     $logMutex.ReleaseMutex() | Out-Null
 }
+Clear-ErrorLog
