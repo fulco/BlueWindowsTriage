@@ -9,14 +9,14 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 - **System Information Collection**: Captures comprehensive details such as hostname, OS version, uptime, installed software, running processes (including the process owner), and network configuration.
 - **User and Group Information**: Gathers data on local users, user groups, and recently created user accounts, including account status and last logon times.
-- **Event Logs**: Retrieves and exports the Security, System, and Application logs from the last 24 hours to CSV format, aiding in quick timeline analysis.
+- **Event Logs**: Retrieves and exports the Security, System, and Application logs from the last 24 hours to evtx format, aiding in quick timeline analysis.
 - **Active Network Connections**: Documents all current network connections with details like local and remote addresses, port numbers, and the owning process.
 - **Registry Analysis**: Examines critical registry keys for autostart configurations, exporting the findings in JSON format for further analysis.
 - **File System Analysis**: Performs a recursive search in critical system directories for recently modified files, collecting important metadata and computing SHA-256 hashes for data integrity.
 - **Artifact Collection**: Includes PowerShell console history, browser histories (Chrome, Firefox, Edge), cookies, and extensions. This can be crucial for understanding user actions and potential breach points.
 - **Scheduled Tasks and Services Analysis**: Provides insights into scheduled tasks and service configurations, which might indicate malicious configurations or tampering.
 - **Comprehensive Logging and Error Handling**: Features robust logging to record operational details and errors, facilitating troubleshooting and ensuring a comprehensive audit trail.
-- **Output Handling**: Automatically compresses collected data into a ZIP file for secure transfer, ensuring data integrity and ease of transportation.
+- **Output Handling**: Automatically hashes and compresses collected data into a ZIP file for secure transfer, ensuring data integrity and ease of transportation.
 
 ## Prerequisites
 
