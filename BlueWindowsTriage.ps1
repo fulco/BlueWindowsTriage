@@ -684,35 +684,8 @@ function Test-CopyItem {
     }
 }
 
-# Zip all files in the output directory and its subdirectories
-try {
-    $zipFile = Join-Path -Path (Split-Path -Path $outputDir -Parent) -ChildPath "output.zip"
-    Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
-} catch {
-    $logMutex.WaitOne() | Out-Null
-    try {
-        Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
-    } finally {
-        $logMutex.ReleaseMutex() | Out-Null
-    }
-}
-#    # Create a temporary directory for compression
-#    $tempDir = "$outputDir\temp"
-#    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-#    # Copy all files to the temporary directory with retry logic
-#    Get-ChildItem -Path $outputDir -Exclude $tempDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
-#        $sourcePath = $_.FullName
-#        $destinationPath = Join-Path -Path $tempDir -ChildPath $_.FullName.Substring($outputDir.Length-1)
-#        Test-CopyItem -sourcePath $sourcePath -destinationPath $destinationPath -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
-
-#    # Compress all files in the output directory and its subdirectories
-#    $zipFile = "$outputDir.zip"
-#    Write-Output "Zip file is $zipFile and the temp path is $tempDir" | Add-Content -Path "$outputDir\script_log.txt"
-#    Get-ChildItem -Path $tempDir -Recurse | Compress-Archive -DestinationPath $zipFile -Force
-
 # Define the current working directory and the parent directory
-$currentDirectory = Get-Location
+$currentDirectory = $outputDir
 $parentDirectory = Split-Path -Path $currentDirectory -Parent
 
 $tempFolderPath = Join-Path -Path $parentDirectory -ChildPath $tempFolderName
@@ -720,26 +693,29 @@ New-Item -ItemType Directory -Path $tempFolderPath
 
 # Copy all files and folders recursively to the temporary folder while maintaining the directory structure
 Get-ChildItem -Path $currentDirectory -Recurse | ForEach-Object {
-$destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($currentDirectory.Length)
-if ($_.PSIsContainer) {
-    $logMutex.WaitOne() | Out-Null
-    try {
-        New-Item -ItemType Directory -Path $destination -Force
-    } finally {
-        $logMutex.ReleaseMutex() | Out-Null
-    }
-} else {
-    $logMutex.WaitOne() | Out-Null
-    try {
-        Copy-Item -Path $_.FullName -Destination $destination -Force
-    } finally {
-        $logMutex.ReleaseMutex() | Out-Null
+    $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($currentDirectory.Length)
+    if ($_.PSIsContainer) {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            New-Item -ItemType Directory -Path $destination -Force
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
+    } else {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Copy-Item -Path $_.FullName -Destination $destination -Force
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
     }
 }
 # Compress the temporary folder into a zip file in the parent directory
 $zipFilePath = Join-Path -Path $parentDirectory -ChildPath $zipFileName
 Compress-Archive -Path $tempFolderPath -DestinationPath $zipFilePath
-
+Write-Output "Zip Path: $zipFilePath"
+Write-Output "Temp path: $tempFolderPat"
+Write-Output "Parent Path: $parentDirectory"
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
     # Delete the temporary folder
@@ -753,44 +729,6 @@ if (Test-Path $zipFilePath) {
         $logMutex.ReleaseMutex() | Out-Null
     }
 }
-
-# Verify zip file creation and content
-#if (Test-Path -Path $zipFile) {
-#    $zipFileInfo = Get-Item -Path $zipFile
-#    if ($zipFileInfo.Length -gt 0) {
-#        $logMutex.WaitOne() | Out-Null
-#        try {
-#            Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\script_log.txt"
-#        } finally {
-#            $logMutex.ReleaseMutex() | Out-Null
-#        }
-#    } else {
-#        $logMutex.WaitOne() | Out-Null
-#        try {
-#            Write-Output-error "Zip file was created but is empty." "$outputDir\error_log.txt"
-#        } finally {
-#            $logMutex.ReleaseMutex() | Out-Null
-#        }
-#    }
-#} else {
-#    $logMutex.WaitOne() | Out-Null
-#    try {
-#        Write-Output-error "Zip file was not created. - $_" "$outputDir\error_log.txt"
-#    } finally {
-#        $logMutex.ReleaseMutex() | Out-Null
-#    }
-#}
-#    # Clean up temporary directory
-#    Remove-Item -Path $tempDir -Recurse -Force
-#} catch {
-#    $logMutex.WaitOne() | Out-Null
-#    try {
-#        Write-Output-error "Error compressing output directory - $_" "$outputDir\error_log.txt"
-#    } finally {
-#        $logMutex.ReleaseMutex() | Out-Null
-#    }
-#}
-
 
 # Stop logging
 Stop-Transcript | Out-Null
