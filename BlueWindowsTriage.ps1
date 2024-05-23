@@ -181,9 +181,10 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\Application_%date%_%time%.evtx"
+    $tempEvtxPath = "$outputDir\Application_$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
-        wevtutil epl Application $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
+        $events = Get-WinEvent -LogName Application -MaxEvents 1500
+        $events | Export-Clixml -Path $tempEvtxPath
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -199,9 +200,10 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\Security_%date%_%time%.evtx"
+    $tempEvtxPath = "$outputDir\Security_$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
-        wevtutil epl Security $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
+        $events = Get-WinEvent -LogName Security -MaxEvents 1500
+        $events | Export-Clixml -Path $tempEvtxPath
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -217,9 +219,10 @@ $jobs += Start-Job -ScriptBlock {
     param($outputDir)
 
     $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-    $tempEvtxPath = "$outputDir\System_%date%_%time%.evtx"
+    $tempEvtxPath = "$outputDir\System__$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
-        wevtutil epl System $tempEvtxPath /q:"*[System[TimeCreated[timediff(@SystemTime) <= 86400000]]]"
+        $events = Get-WinEvent -LogName System -MaxEvents 1500
+        $events | Export-Clixml -Path $tempEvtxPath
     } catch {
         $logMutex.WaitOne() | Out-Null
         try {
@@ -313,7 +316,7 @@ $jobs += Start-Job -ScriptBlock {
     try {
         $criticalDirs = @("C:\Windows\System32", "C:\Windows\SysWOW64", "C:\Users\Public")
         foreach ($dir in $criticalDirs) {
-            $recentFiles = Get-ChildItem -Path $dir -Recurse -File | Where-Object {$_.LastWriteTime -ge (Get-Date).AddHours(-24)}
+            $recentFiles = Get-ChildItem -Path $dir -Recurse -File | Where-Object {$_.LastWriteTime -ge (Get-Date).AddHours(-24) -and $_.Extension -ne ".evtx"}
             $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation
         }
     } catch {
@@ -401,23 +404,25 @@ $jobs | ForEach-Object { $_ | Wait-Job | Receive-Job }
 $jobs | Remove-Job
 
 # Artifact Collection
-try {
-    $artifacts = @(
-        "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
-        "C:\\Windows\\System32\\winevt\\Logs\\System.evtx",
-        "C:\\Windows\\System32\\winevt\\Logs\\Application.evtx"
-    )
-    $artifacts | ForEach-Object {
-        Copy-Item -Path $_ -Destination "$outputDir\\Artifacts" -Force
-    }
-} catch {
-    $logMutex.WaitOne() | Out-Null
-    try {
-        Write-Output-error "Error collecting artifacts - $_" "$outputDir\\error_log.txt"
-    } finally {
-        $logMutex.ReleaseMutex() | Out-Null
-    }
-}
+# try {
+#     $artifacts = @(
+#         "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx",
+#         "C:\\Windows\\System32\\winevt\\Logs\\System.evtx",
+#         "C:\\Windows\\System32\\winevt\\Logs\\Application.evtx"
+#     )
+#     $a=1
+#     $artifacts | ForEach-Object {
+#         Copy-Item -Path $_ -Destination "$outputDir\\Artifacts.$a.evtx" -Force
+#         $a++
+#     }
+# } catch {
+#     $logMutex.WaitOne() | Out-Null
+#     try {
+#         Write-Output-error "Error collecting artifacts $a- $_" "$outputDir\\error_log.txt"
+#     } finally {
+#         $logMutex.ReleaseMutex() | Out-Null
+#     }
+# }
 
 
 # Firefox Extension Collection
@@ -652,7 +657,15 @@ function Test-CopyItem {
     $success = $false
     while ($attempt -lt $retries -and -not $success) {
         try {
-            Copy-Item -Path $sourcePath -Destination $destinationPath -Recurse -Force
+            Get-ChildItem -Path $sourcePath -Recurse -Exclude "*temp*" | ForEach-Object {
+                $relativePath = $_.FullName.Substring($sourcePath.Length)
+                $destinationFile = Join-Path -Path $destinationPath -ChildPath $relativePath
+                $destinationDirectory = Split-Path -Path $destinationFile -Parent
+                if (-not (Test-Path -Path $destinationDirectory)) {
+                    New-Item -ItemType Directory -Path $destinationDirectory | Out-Null
+                }
+                Copy-Item -Path $_.FullName -Destination $destinationFile -Force
+            }
             $success = $true
         } catch {
             $attempt++
@@ -671,57 +684,69 @@ function Test-CopyItem {
     }
 }
 
+# Zip all files in the output directory and its subdirectories
 try {
-    # Create a temporary directory for compression
-    $tempDir = "$outputDir\temp"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-    # Copy all files to the temporary directory with retry logic
-    Get-ChildItem -Path $outputDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
-        Test-CopyItem -sourcePath $_.FullName -destinationPath $tempDir -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
-    }
-
-    # Compress the temporary directory
-    $zipFile = "$outputDir.zip"
-    Compress-Archive -Path $tempDir -DestinationPath $zipFile -Force
-
-    # Verify zip file creation and content
-    if (Test-Path -Path $zipFile) {
-        $zipFileInfo = Get-Item -Path $zipFile
-        if ($zipFileInfo.Length -gt 0) {
-            $logMutex.WaitOne() | Out-Null
-            try {
-                Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\script_log.txt"
-            } finally {
-                $logMutex.ReleaseMutex() | Out-Null
-            }
-        } else {
-            $logMutex.WaitOne() | Out-Null
-            try {
-                Write-Output-error "Zip file was created but is empty." "$outputDir\error_log.txt"
-            } finally {
-                $logMutex.ReleaseMutex() | Out-Null
-            }
-        }
-    } else {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Zip file was not created." "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
-    }
-
-    # Clean up temporary directory
-    Remove-Item -Path $tempDir -Recurse -Force
+    $zipFile = Join-Path -Path (Split-Path -Path $outputDir -Parent) -ChildPath "output.zip"
+    Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
-        Write-Output-error "Error compressing output directory - $_" "$outputDir\error_log.txt"
+        Write-Output-error "Error compressing output directory - $_" "$outputDir\\error_log.txt"
     } finally {
         $logMutex.ReleaseMutex() | Out-Null
     }
 }
+#    # Create a temporary directory for compression
+#    $tempDir = "$outputDir\temp"
+#    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+#    # Copy all files to the temporary directory with retry logic
+#    Get-ChildItem -Path $outputDir -Exclude $tempDir | Where-Object { $_.FullName -ne $tempDir } | ForEach-Object {
+#        $sourcePath = $_.FullName
+#        $destinationPath = Join-Path -Path $tempDir -ChildPath $_.FullName.Substring($outputDir.Length-1)
+#        Test-CopyItem -sourcePath $sourcePath -destinationPath $destinationPath -retries $maxRetries -delay $retryDelay -logFile "$outputDir\error_log.txt"
+
+#    # Compress all files in the output directory and its subdirectories
+#    $zipFile = "$outputDir.zip"
+#    Write-Output "Zip file is $zipFile and the temp path is $tempDir" | Add-Content -Path "$outputDir\script_log.txt"
+#    Get-ChildItem -Path $tempDir -Recurse | Compress-Archive -DestinationPath $zipFile -Force
+
+# Verify zip file creation and content
+if (Test-Path -Path $zipFile) {
+    $zipFileInfo = Get-Item -Path $zipFile
+    if ($zipFileInfo.Length -gt 0) {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Write-Output "Zip file created successfully and contains data." | Add-Content -Path "$outputDir\script_log.txt"
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
+    } else {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Write-Output-error "Zip file was created but is empty." "$outputDir\error_log.txt"
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
+    }
+} else {
+    $logMutex.WaitOne() | Out-Null
+    try {
+        Write-Output-error "Zip file was not created." "$outputDir\error_log.txt"
+    } finally {
+        $logMutex.ReleaseMutex() | Out-Null
+    }
+}
+#    # Clean up temporary directory
+#    Remove-Item -Path $tempDir -Recurse -Force
+#} catch {
+#    $logMutex.WaitOne() | Out-Null
+#    try {
+#        Write-Output-error "Error compressing output directory - $_" "$outputDir\error_log.txt"
+#    } finally {
+#        $logMutex.ReleaseMutex() | Out-Null
+#    }
+#}
 
 
 # Stop logging
