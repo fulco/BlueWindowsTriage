@@ -570,7 +570,6 @@ try {
     }
 }
 
-
 # Search for Password Files
 try {
     $passwordFiles = Get-ChildItem -Path "C:\\Users\\*\\Documents\\*password*" -Recurse -ErrorAction SilentlyContinue
@@ -604,7 +603,6 @@ try {
     }
 }
 
-
 # Prefetch Files Collection
 try {
     # Create a subdirectory for prefetch files
@@ -623,7 +621,6 @@ try {
     }
 }
 
-
 # Jump Lists Collection
 try {
     $jumpListFiles = Get-ChildItem -Path "C:\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\AutomaticDestinations" -ErrorAction SilentlyContinue
@@ -636,7 +633,6 @@ try {
         $logMutex.ReleaseMutex() | Out-Null
     }
 }
-
 
 # Windows Timeline Collection
 try {
@@ -678,16 +674,15 @@ try {
 }
 
 # Define the current working directory and the parent directory
-$currentDirectory = $outputDir
 $parentDirectory = Split-Path -Path $outputDir -Parent
 $tempFolderName = "Temp$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 $tempFolderPath = "$parentDirectory\$tempFolderName"
 New-Item -ItemType Directory -Path $tempFolderPath -Force
 
 # Copy all files and folders recursively to the temporary folder while maintaining the directory structure
-Get-ChildItem -Path $currentDirectory -Recurse | ForEach-Object {
+Get-ChildItem -Path $outputDir -Recurse | ForEach-Object {
     if ($_.FullName -ne $tempFolderPath) {
-        $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($currentDirectory.Length-1)
+        $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($outputDir.Length-1)
         if ($_.PSIsContainer) {
             $logMutex.WaitOne() | Out-Null
             try {
