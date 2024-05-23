@@ -640,82 +640,49 @@ try {
     }
 }
 
-
-# Compress and Timestamp Output
-$maxRetries = 5
-$retryDelay = 10  # seconds
-
-function Test-CopyItem {
-    param (
-        [string]$sourcePath,
-        [string]$destinationPath,
-        [int]$retries,
-        [int]$delay,
-        [string]$logFile
-    )
-    $attempt = 0
-    $success = $false
-    while ($attempt -lt $retries -and -not $success) {
-        try {
-            Get-ChildItem -Path $sourcePath -Recurse -Exclude "*temp*" | ForEach-Object {
-                $relativePath = $_.FullName.Substring($sourcePath.Length)
-                $destinationFile = Join-Path -Path $destinationPath -ChildPath $relativePath
-                $destinationDirectory = Split-Path -Path $destinationFile -Parent
-                if (-not (Test-Path -Path $destinationDirectory)) {
-                    New-Item -ItemType Directory -Path $destinationDirectory | Out-Null
-                }
-                Copy-Item -Path $_.FullName -Destination $destinationFile -Force
-            }
-            $success = $true
-        } catch {
-            $attempt++
-            if ($attempt -lt $retries) {
-                Start-Sleep -Seconds $delay
-            } else {
-                # Log the error and continue
-                $logMutex.WaitOne() | Out-Null
-                try {
-                    Write-Output "Failed to copy $sourcePath to $destinationPath after $attempt attempts: $_" | Add-Content -Path $logFile
-                } finally {
-                    $logMutex.ReleaseMutex() | Out-Null
-                }
-            }
-        }
-    }
-}
-
 # Define the current working directory and the parent directory
 $currentDirectory = $outputDir
-$parentDirectory = Split-Path -Path $currentDirectory -Parent
-
-$tempFolderPath = Join-Path -Path $parentDirectory -ChildPath $tempFolderName
-New-Item -ItemType Directory -Path $tempFolderPath
+$parentDirectory = Split-Path -Path $outputDir -Parent
+$tempFolderName = "Temp$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+$tempFolderPath = "$parentDirectory\$tempFolderName"
+New-Item -ItemType Directory -Path $tempFolderPath -Force
 
 # Copy all files and folders recursively to the temporary folder while maintaining the directory structure
 Get-ChildItem -Path $currentDirectory -Recurse | ForEach-Object {
-    $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($currentDirectory.Length)
-    if ($_.PSIsContainer) {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            New-Item -ItemType Directory -Path $destination -Force
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
-    } else {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Copy-Item -Path $_.FullName -Destination $destination -Force
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
+    if ($_.FullName -ne $tempFolderPath) {
+        $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($currentDirectory.Length-1)
+        if ($_.PSIsContainer) {
+            $logMutex.WaitOne() | Out-Null
+            try {
+                if ($_.FullName -ne $tempFolderPath -and $_.Name -ne $tempFolderName -and !(Test-Path $destination)) {
+                    New-Item -ItemType Directory -Path $destination -Force
+                }
+            } finally {
+                $logMutex.ReleaseMutex() | Out-Null
+            }
+        } else {
+            $logMutex.WaitOne() | Out-Null
+            try {
+                if ($_.DirectoryName -ne $tempFolderPath -and !(Test-Path $destination)) {
+                    Copy-Item -Path $_.FullName -Destination $destination -Force
+                }
+            } finally {
+                $logMutex.ReleaseMutex() | Out-Null
+            }
         }
     }
 }
-# Compress the temporary folder into a zip file in the parent directory
-$zipFilePath = Join-Path -Path $parentDirectory -ChildPath $zipFileName
+
+# Compress the temporary folder into a zip file in the output directory
+$zipFileName = "IR-$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
+$zipFilePath = "$parentDirectory\$zipFileName"
 Compress-Archive -Path $tempFolderPath -DestinationPath $zipFilePath
-Write-Output "Zip Path: $zipFilePath"
-Write-Output "Temp path: $tempFolderPat"
-Write-Output "Parent Path: $parentDirectory"
+
+# Write-Output "Zip Path: $zipFilePath"
+# Write-Output "Zip Name: $zipFileName"
+# Write-Output "Temp path: $tempFolderPath"
+# Write-Output "Parent Path: $parentDirectory"
+
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
     # Delete the temporary folder
