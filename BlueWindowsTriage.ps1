@@ -21,7 +21,7 @@ Start-Transcript -Path $logFile -Append
 
 # Initialize a mutex for synchronized logging
 $logMutex = New-Object System.Threading.Mutex($false, "LogMutex")
-
+$logMutex2 = New-Object System.Threading.Mutex($false, "LogMutex2")
 # Global error logging function with batch processing to reduce call depth
 function Write-Output-error {
     param (
@@ -44,6 +44,27 @@ function Write-Output-error {
     }
 }
 
+function Write-Output-log {
+    param (
+        [string] $Message,
+        [string] $LogFile = "$outputDir\\error_log.txt"
+    )
+    # Collect errors in a list and log them periodically to avoid frequent I/O operations
+    if (-not $global:errorList) {
+        $global:errorList = @()
+    }
+    $global:errorList += "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
+    if ($global:errorList.Count -gt 100) {
+        $logMutex2.WaitOne() | Out-Null
+        try {
+            $global:errorList | Add-Content -Path $LogFile
+            $global:errorList.Clear()
+        } finally {
+            $logMutex2.ReleaseMutex() | Out-Null
+        }
+    }
+}
+
 # Ensure any remaining errors are logged at the end of the script
 function Clear-ErrorLog {
     if ($global:errorList -and $global:errorList.Count -gt 0) {
@@ -53,6 +74,18 @@ function Clear-ErrorLog {
             $global:errorList.Clear()
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
+        }
+    }
+}
+# Ensure any remaining errors are logged at the end of the script
+function Clear-Log {
+    if ($global:errorList -and $global:errorList.Count -gt 0) {
+        $logMutex2.WaitOne() | Out-Null
+        try {
+            $global:errorList | Add-Content -Path "$outputDir\\error_log.txt"
+            $global:errorList.Clear()
+        } finally {
+            $logMutex2.ReleaseMutex() | Out-Null
         }
     }
 }
@@ -67,7 +100,12 @@ function Get-FileHashSafely {
         $hash = Get-FileHash -Path $FilePath -Algorithm $Algorithm -ErrorAction Stop
         return $hash.Hash
     } catch {
-        Write-Output-error "Error calculating hash for file: $FilePath - $_"
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Write-Output-error "Error calculating hash for file: $FilePath - $_"
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
+        }
         return $null
     }
 }
@@ -78,11 +116,11 @@ function Export-RegistryKey {
         [string]$outputDir
     )
 
-    $logMutex.WaitOne() | Out-Null
+    $logMutex2.WaitOne() | Out-Null
     try {
         Write-Output "Exporting registry key: $keyPath" | Add-Content -Path "$outputDir\\script_log.txt"
     } finally {
-        $logMutex.ReleaseMutex() | Out-Null
+        $logMutex2.ReleaseMutex() | Out-Null
     }
 
     try {
@@ -548,13 +586,12 @@ try {
     }
 }
 
-
 # User PowerShell History Collection
 try {
     $powershellHistoryPath = "C:\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt"
     $powershellHistoryFiles = Get-ChildItem -Path $powershellHistoryPath -ErrorAction SilentlyContinue
     $powershellHistoryFiles | ForEach-Object {
-        $destinationPath = "$outputDir\\PowerShellHistory\\$($_.Directory.Name)"
+        $destinationPath = "$outputDir\\$($_.Directory.Name)"
         New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
         Copy-Item -Path $_.FullName -Destination $destinationPath -Force
     }
@@ -676,18 +713,24 @@ Get-ChildItem -Path $currentDirectory -Recurse | ForEach-Object {
 # Compress the temporary folder into a zip file in the output directory
 $zipFileName = "IR-$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
 $zipFilePath = "$parentDirectory\$zipFileName"
-Compress-Archive -Path $tempFolderPath -DestinationPath $zipFilePath
-
-# Write-Output "Zip Path: $zipFilePath"
-# Write-Output "Zip Name: $zipFileName"
-# Write-Output "Temp path: $tempFolderPath"
-# Write-Output "Parent Path: $parentDirectory"
+$zipParams = @{
+    path = $tempFolderPath
+    destinationPath = $zipFilePath
+    CompressionLevel = "Optimal"
+}
+Compress-Archive @zipParams
 
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
     # Delete the temporary folder
     Remove-Item -Recurse -Force -Path $tempFolderPath
-    Write-Output "Backup created successfully: $zipFilePath" | Add-Content -Path "$outputDir\script_log.txt"
+    wait-event -timeout 3
+    $logMutex2.WaitOne() | Out-Null
+    try {
+        Write-Output "Backup created successfully: $zipFilePath" | Add-Content -Path "$outputDir\script_log.txt"
+    } finally {
+        $logMutex2.ReleaseMutex() | Out-Null
+    }
 } else {
     $logMutex.WaitOne() | Out-Null
     try {
@@ -711,10 +754,10 @@ $minutes = $executionTime.Minutes
 $seconds = $executionTime.Seconds
 $readableExecutionTime = "$days days, $hours hours, $minutes minutes, $seconds seconds"
 
-$logMutex.WaitOne() | Out-Null
+$logMutex2.WaitOne() | Out-Null
 try {
     Write-Output "Total script execution time: $readableExecutionTime" | Add-Content -Path "$outputDir\script_log.txt"
 } finally {
-    $logMutex.ReleaseMutex() | Out-Null
+    $logMutex2.ReleaseMutex() | Out-Null
 }
 Clear-ErrorLog
