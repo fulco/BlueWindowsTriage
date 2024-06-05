@@ -343,29 +343,6 @@ $jobs += Start-Job -ScriptBlock {
     }
 } -ArgumentList $outputDir
 
-# Collect recent files from critical directories
-$jobs += Start-Job -ScriptBlock {
-    param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-
-    try {
-        $criticalDirs = @("C:\Windows\System32", "C:\Windows\SysWOW64", "C:\Users\Public")
-        foreach ($dir in $criticalDirs) {
-            $recentFiles = Get-ChildItem -Path $dir -Recurse -File -ErrorAction Ignore | Where-Object {$_.LastWriteTime -ge (Get-Date).AddHours(-24) -and $_.Extension -ne ".evtx"}
-            $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation -ErrorAction Ignore
-        }
-    } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting file system data - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
-    }
-} -ArgumentList $outputDir
-
 # Collect cookies from browsers for further analysis
 $jobs += Start-Job -ScriptBlock {
     param($outputDir)
@@ -380,7 +357,7 @@ $jobs += Start-Job -ScriptBlock {
             "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\Cookies"
         )
         foreach ($path in $cookiePaths) {
-            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $using:outputDir -Force
+            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir -Force
         }
     } catch {
         $logMutex.WaitOne() | Out-Null
@@ -610,22 +587,6 @@ try {
     }
 }
 
-# Windows Timeline Collection
-try {
-    $timelineRegistry = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ActivityDataModel"
-#    $timelineRegistryFile = "$outputDir\\Timeline.reg"
-    Export-RegistryKey -keyPath $timelineRegistry -outputDir $outputDir
-    $timelineFiles = Get-ChildItem -Path "C:\\Users\\*\\AppData\\Local\\ConnectedDevicesPlatform\\*\\ActivitiesCache.db" -ErrorAction SilentlyContinue
-    $timelineFiles | Copy-Item -Destination "$outputDir\\WindowsTimeline" -Force
-} catch {
-    $logMutex.WaitOne() | Out-Null
-    try {
-        Write-Output-error "Error collecting Windows Timeline data - $_" "$outputDir\\error_log.txt"
-    } finally {
-        $logMutex.ReleaseMutex() | Out-Null
-    }
-}
-
 # Hashing of Collected Files
 try {
     $collectedFiles = Get-ChildItem -Path $outputDir -File -Recurse
@@ -689,7 +650,7 @@ $zipParams = @{
     destinationPath = $zipFilePath
     CompressionLevel = "Optimal"
 }
-Compress-Archive @zipParams
+Compress-Archive @zipParams -ErrorAction Ignore
 
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
@@ -698,14 +659,14 @@ if (Test-Path $zipFilePath) {
     wait-event -timeout 3
     $logMutex2.WaitOne() | Out-Null
     try {
-        Write-Output "Backup created successfully: $zipFilePath" | Add-Content -Path "$outputDir\script_log.txt"
+        Write-Output "Backup created successfully: $zipFilePath" | Add-Content -Path "$outputDir\script_log.txt" -ErrorAction SilentlyContinue
     } finally {
         $logMutex2.ReleaseMutex() | Out-Null
     }
 } else {
     $logMutex.WaitOne() | Out-Null
     try {
-        Write-Output-error "Zip file was not created. - $_" "$outputDir\error_log.txt"
+        Write-Output-error "Zip file was not created. - $_" "$outputDir\error_log.txt" -ErrorAction SilentlyContinue
     } finally {
         $logMutex.ReleaseMutex() | Out-Null
     }
