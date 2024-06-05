@@ -508,7 +508,7 @@ try {
     $edgeHistoryPath = "C:\\Users\\*\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History"
     $edgeHistoryFiles = Get-ChildItem -Path $edgeHistoryPath -ErrorAction SilentlyContinue
     $edgeHistoryFiles | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination "$outputDir\\EdgeHistory" -Force
+        Copy-Item -Path $_.FullName -Destination "$outputDir\\EdgeHistory.sqlite" -Force
     }
 } catch {
     $logMutex.WaitOne() | Out-Null
