@@ -448,7 +448,7 @@ try {
 try {
     $chromeExtensionsPath = "C:\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Extensions"
     $chromeExtensions = Get-ChildItem -Path $chromeExtensionsPath -Recurse -Directory -ErrorAction SilentlyContinue
-    $chromeExtensions | ForEach-Object -Parallel -ThrottleLimit 10 {
+    $chromeExtensions | ForEach-Object {
         $manifestPath = "$($_.FullName)\\manifest.json"
         if (Test-Path -Path $manifestPath) {
             $extensionInfo = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
@@ -457,10 +457,8 @@ try {
                 Name = $extensionInfo.name
                 Version = $extensionInfo.version
                 Description = $extensionInfo.description
-            }
+            } | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
         }
-    } | ForEach-Object {
-        $_ | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
     }
 } catch {
     $logMutex.WaitOne() | Out-Null
@@ -470,8 +468,6 @@ try {
         $logMutex.ReleaseMutex() | Out-Null
     }
 }
-
-
 
 # Chrome History Collection
 try {
