@@ -44,27 +44,6 @@ function Write-Output-error {
     }
 }
 
-function Write-Output-log {
-    param (
-        [string] $Message,
-        [string] $LogFile = "$outputDir\\error_log.txt"
-    )
-    # Collect errors in a list and log them periodically to avoid frequent I/O operations
-    if (-not $global:errorList) {
-        $global:errorList = @()
-    }
-    $global:errorList += "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
-    if ($global:errorList.Count -gt 100) {
-        $logMutex2.WaitOne() | Out-Null
-        try {
-            $global:errorList | Add-Content -Path $LogFile
-            $global:errorList.Clear()
-        } finally {
-            $logMutex2.ReleaseMutex() | Out-Null
-        }
-    }
-}
-
 # Ensure any remaining errors are logged at the end of the script
 function Clear-ErrorLog {
     if ($global:errorList -and $global:errorList.Count -gt 0) {
@@ -136,15 +115,51 @@ function Export-RegistryKey {
 }
 
 # Detect Windows version
-$windowsVersion = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+# Get the OS version information
+$os = Get-CimInstance -ClassName Win32_OperatingSystem
 
-$logMutex2.WaitOne() | Out-Null
-    try {
-        # Output the Windows version
-        Write-Output "Windows Version: $windowsVersion" | Add-Content -Path "$outputDir\\script_log.txt"
-    } finally {
-        $logMutex2.ReleaseMutex() | Out-Null
+# Extract the version number
+$osVersion = [Version]$os.Version
+
+# Initialize the variable to hold the value based on OS version
+$valueBasedOnOS = ""
+
+# Conditional logic to set the value based on the OS version
+if ($osVersion.Major -eq 10) {
+    if ($osVersion.Minor -eq 0) {
+        $valueBasedOnOS = "Windows 10"
+    } elseif ($osVersion.Minor -eq 1) {
+        $valueBasedOnOS = "Windows 11"
     }
+} elseif ($osVersion.Major -eq 6) {
+    switch ($osVersion.Minor) {
+        3 { $valueBasedOnOS = "Windows 8.1" }
+        2 { $valueBasedOnOS = "Windows 8" }
+        1 { $valueBasedOnOS = "Windows 7" }
+        0 { $valueBasedOnOS = "Windows Vista" }
+    }
+} elseif ($osVersion.Major -eq 5) {
+    $valueBasedOnOS = "Windows XP"
+}else {
+    $valueBasedOnOS = "Unknown OS Version"
+}
+
+# Output the value
+Write-Output "Windows Version: $valueBasedOnOS" | Add-Content -Path "$outputDir\\winver_log.txt"
+
+# Define the registry path
+$registryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+# Initialize variable for Firefox version
+$firefoxVersion = ""
+$firefoxVersion = Get-ChildItem -Path "$registryPath" | Where-Object { $_.PSChildName -like "Mozilla *" } | ForEach-Object { Get-ItemProperty -Path $_.PSPath } | Select-Object -Property DisplayVersion
+# Define the input string
+$inputString = "$firefoxVersion"
+
+# Remove unwanted parts of the string
+$ffversion = $inputString -replace "@{DisplayVersion=", "" -replace "}", ""
+
+# Output the extracted version
+Write-Output "FFVersion: $ffversion" | Add-Content -Path "$outputDir\\ff_log.txt"
 
 # Core Parallel Processing
 $jobs = @()
@@ -457,18 +472,23 @@ try {
 
 # Google Chrome Extension Collection
 try {
-    $chromeExtensionsPath = "C:\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Extensions"
-    $chromeExtensions = Get-ChildItem -Path $chromeExtensionsPath -Recurse -Directory -ErrorAction SilentlyContinue
-    $chromeExtensions | ForEach-Object {
-        $manifestPath = "$($_.FullName)\\manifest.json"
-        if (Test-Path -Path $manifestPath) {
-            $extensionInfo = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
-            [PSCustomObject]@{
-                Id = $_.Name
-                Name = $extensionInfo.name
-                Version = $extensionInfo.version
-                Description = $extensionInfo.description
-            } | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
+    $chromeExtensionsPaths = @(
+        "%USERPROFILE%\AppData\Local\Google\Chrome\User Data\*\Extensions\*\*",
+        "%USERPROFILE%\AppData\Local\Microsoft\Edge\User Data\*\Extensions\*\*"
+    )
+    $chromeExtensionsPaths | ForEach-Object {
+        $chromeExtensions = Get-ChildItem -Path $_ -Recurse -Directory -ErrorAction SilentlyContinue
+        $chromeExtensions | ForEach-Object {
+            $manifestPath = "$($_.FullName)\\manifest.json"
+            if (Test-Path -Path $manifestPath) {
+                $extensionInfo = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+                [PSCustomObject]@{
+                    Id = $_.Name
+                    Name = $extensionInfo.name
+                    Version = $extensionInfo.version
+                    Description = $extensionInfo.description
+                } | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
+            }
         }
     }
 } catch {
