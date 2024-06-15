@@ -166,6 +166,71 @@ $firefoxVersion = Get-ChildItem -Path "$registryPath" | Where-Object { $_.PSChil
 # Remove unwanted parts of the string
 $ffversion = $firefoxVersion -replace "@{DisplayVersion=", "" -replace "}", ""
 
+# Define registry paths to search for Chrome installations
+$registryPaths = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKU:\*\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\Software\Google\Chrome\*",
+    "HKCU:\Software\Google\Chrome\*",
+    "HKU:\*\Software\Google\Chrome\*",
+    "HKLM:\Software\Classes\Installer\Products\*",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\*",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-21-*\Products\*"
+)
+
+# Initialize an array to store Chrome installations
+$chromeInstallations = @()
+
+# Function to check registry paths for Chrome installations
+function Get-ChromeInstallations {
+    param (
+        [string]$path
+    )
+    
+    Get-ChildItem -Path $path -ErrorAction SilentlyContinue | ForEach-Object {
+        $key = $_.PSPath
+        $displayName = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).DisplayName
+        $displayVersion = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).DisplayVersion
+        
+        if ($displayName -like "*Chrome*") {
+            $chromeInstallations += [PSCustomObject]@{
+                Path    = $key
+                Name    = $displayName
+                Version = $displayVersion
+            }
+        }
+    }
+}
+
+# Search each registry path for Chrome installations
+foreach ($path in $registryPaths) {
+    Get-ChromeInstallations -path $path -ErrorAction SilentlyContinue
+}
+
+# Output the results
+if ($chromeInstallations.Count -gt 0) {
+    Write-Output "Google Chrome Version: $chromeVersion"
+    Write-Output "Google Chrome Version: $chromeVersion" | Add-Content -Path "$outputDir\\chrome_log.txt"
+    $chromeInstallations | Format-Table -AutoSize
+} else {
+    Write-Output "No Google Chrome installations found."
+}
+
+function Get-ChromeVersion {
+    param (
+        [string]$registryPath
+    )
+    if (Test-Path $registryPath) {
+        $chromeInfo = Get-ItemProperty $registryPath
+        return $chromeInfo.DisplayVersion
+    }
+    return $null
+}
+
+
 # Define the registry path for Brave Browser
 $registryPath = "HKLM:\Software\BraveSoftware"
 
@@ -247,7 +312,6 @@ function Copy-ItemWithHierarchy {
 
 if ($braveInstalled -eq $true) {
     Write-Output "Brave Browser is installed."
-    Write-Output "Brave Browser is installed." | Add-Content -Path "$outputDir\\brave_log.txt"
     $bboutputDir = "$outputDir\BB"
     # Define source and destination paths
     $sourcePath = "C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default"
@@ -496,12 +560,12 @@ if ($valueBasedOnOS -eq "Windows XP") {
             $fileName = Split-Path -Leaf $path
             $extension = [System.IO.Path]::GetExtension($fileName)
             $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-            Write-Output "Attempting to Export FFpaths $counter and logins for $baseName"
+            #Write-Output "Attempting to Export FFpaths $counter and logins for $baseName"
             $destination = Join-Path $ffPath ("$baseName$counter$extension" -replace '[\\/:*?"<>|]', '')
             Get-ChildItem $path -ErrorAction SilentlyContinue | Copy-Item -Destination $destination -Force
             $counter++
         }
-        Write-Output "Attempting to Export FF Bookmarks and logins for $valueBasedOnOS"
+        #Write-Output "Attempting to Export FF Bookmarks and logins for $valueBasedOnOS"
 } else {
     Write-Output-error "Error collecting FF3 browser history - $_" "$outputDir\error_log.txt"
 }
@@ -651,7 +715,7 @@ try {
             Write-Output "Exporting $fileName for $valueBasedOnOS" | Add-Content -Path "$cePath\\script_log.txt"
             $b++
         }
-        Write-Output "Attempting to Export Chrome/Edge Bookmarks for $valueBasedOnOS"
+        #Write-Output "Attempting to Export Chrome/Edge Bookmarks for $valueBasedOnOS"
     } elseif ($valueBasedOnOS -eq "Windows Vista" -or $valueBasedOnOS -eq "Windows 7" -or $valueBasedOnOS -eq "Windows 8" -or $valueBasedOnOS -eq "Windows 8.1" -or $valueBasedOnOS -eq "Windows 10" -or $valueBasedOnOS -eq "Windows 11") {
         $chromePaths = @(
             "C:\\Users\\*\\Local Settings\Application Data\Google\Chrome\User Data\*\History",
@@ -718,7 +782,7 @@ if ($ffversion -lt 26 -and $ffversion -gt 2) {
         Write-Output "Exporting $fileName for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
         $b++
     }
-    Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
+    #Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
 } elseif ($ffversion -gt 25) {
     $ffDLPaths = @(
         "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\places.sqlite",
@@ -735,7 +799,7 @@ if ($ffversion -lt 26 -and $ffversion -gt 2) {
         if (Test-Path $path -PathType Container) {
             $lastFolder = Split-Path -Leaf $path
             $destination = Join-Path $ffPath ("$counter$lastFolder" -replace '[\\/:*?"<>|]', '')
-            Write-Output "Attempting to Error check $path at $destination for $valueBasedOnOS and FF:$ffversion"
+            #Write-Output "Attempting to Error check $path at $destination for $valueBasedOnOS and FF:$ffversion"
             Copy-Item $path -Destination $destination -Recurse -Force
         } elseif (Test-Path $path -PathType Leaf) {
             $fileName = Split-Path -Leaf $path
@@ -746,7 +810,7 @@ if ($ffversion -lt 26 -and $ffversion -gt 2) {
         }
         $counter++
     }
-    Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
+    #Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
 } else {
     Write-Output-error "Error collecting Chrome/Edge history - $_" "$outputDir\\error_log.txt"
 }
@@ -767,7 +831,7 @@ try {
         Get-ChildItem $path -ErrorAction Continue | Copy-Item -Destination $destination -Force
         $counter++
     }
-    Write-Output "Attempting to Export FF History & HTML5 Storage"
+    #Write-Output "Attempting to Export FF History & HTML5 Storage"
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
