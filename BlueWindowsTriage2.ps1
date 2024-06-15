@@ -147,6 +147,15 @@ if ($osVersion.Major -eq 10) {
 # Output the value
 Write-Output "Windows Version: $valueBasedOnOS" | Add-Content -Path "$outputDir\\winver_log.txt"
 
+$cePath = "$outputDir\CE"
+if (-Not (Test-Path $cePath)) {
+    New-Item -ItemType Directory -Path $cePath
+}
+$ffPath = "$outputDir\FF"
+if (-Not (Test-Path $ffPath)) {
+    New-Item -ItemType Directory -Path $ffPath
+}
+
 # FireFox Version Collection
 # Define the registry path
 $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
@@ -157,9 +166,105 @@ $firefoxVersion = Get-ChildItem -Path "$registryPath" | Where-Object { $_.PSChil
 # Remove unwanted parts of the string
 $ffversion = $firefoxVersion -replace "@{DisplayVersion=", "" -replace "}", ""
 
-# Output the extracted version
-Write-Output "FFVersion: $ffversion" | Add-Content -Path "$outputDir\\ff_log.txt"
+# Define the registry path for Brave Browser
+$registryPath = "HKLM:\Software\BraveSoftware"
 
+# Initialize variables
+$braveInstalled = $false
+
+# Check if the registry path exists
+if (Test-Path $registryPath) {
+    $braveInstalled = $true
+}
+
+# Output the installation status and version
+$braveInstalled
+if ($braveInstalled) {
+    Write-Output "Brave Browser is installed" | Add-Content -Path "$outputDir\\brave_log.txt"
+} else {
+    Write-Output "Brave Browser is not installed."
+}
+
+# Define the registry path for Chrome Browser
+$chromeRegistryPath = "HKLM:\Software\Google\Chrome"
+$chromeRegistryPathWow6432Node = "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome"
+
+# Initialize variables
+$chromeInstalled = $false
+$chromeVersion = ""
+
+# Function to check Chrome installation and get version
+function Get-ChromeVersion {
+    param (
+        [string]$registryPath
+    )
+    if (Test-Path $registryPath) {
+        $chromeInfo = Get-ItemProperty $registryPath
+        return $chromeInfo.DisplayVersion
+    }
+    return $null
+}
+
+# Check if Chrome is installed
+$chromeVersion = Get-ChromeVersion -registryPath $chromeRegistryPath
+if (-not $chromeVersion) {
+    $chromeVersion = Get-ChromeVersion -registryPath $chromeRegistryPathWow6432Node
+}
+
+# Set installation status
+if ($chromeVersion) {
+    $chromeInstalled = $true
+}
+
+if ($chromeInstalled) {
+    Write-Output "Google Chrome Version: $chromeVersion"
+    Write-Output "Google Chrome Version: $chromeVersion" | Add-Content -Path "$outputDir\\chrome_log.txt"
+} else {
+    Write-Output "Googßle Chrome is not installed."
+}
+
+
+# Function to copy items maintaining directory structure
+function Copy-ItemWithHierarchy {
+    param (
+        [string]$source,
+        [string]$destination
+    )
+
+    Get-ChildItem -Path $source -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($source.Length)
+        $destPath = Join-Path -Path $destination -ChildPath $relativePath
+
+        if ($_.PSIsContainer) {
+            if (-Not (Test-Path $destPath)) {
+                New-Item -ItemType Directory -Path $destPath
+            }
+        } else {
+            Copy-Item -Path $_.FullName -Destination $destPath
+        }
+    }
+}
+
+if ($braveInstalled -eq $true) {
+    Write-Output "Brave Browser is installed."
+    Write-Output "Brave Browser is installed." | Add-Content -Path "$outputDir\\brave_log.txt"
+    $bboutputDir = "$outputDir\BB"
+    # Define source and destination paths
+    $sourcePath = "C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default"
+
+    # Create the destination folder if it does not exist
+    if (-Not (Test-Path $bboutputDir)) {
+        New-Item -ItemType Directory -Path $bboutputDir
+    }
+
+    # Copy the artifacts
+    Copy-ItemWithHierarchy -source $sourcePath -destination $bboutputDir
+
+    Write-Output "Brave Browser artifacts have been copied to $bboutputDir"
+
+} else {
+    Write-Output "Brave Browser is not installed." | Add-Content -Path "$outputDir\\brave_log.txt"
+}
 # Core Parallel Processing
 $jobs = @()
 
@@ -372,22 +477,31 @@ if ($valueBasedOnOS -eq "Windows XP") {
     $firefoxHistoryPath = "C:\\Documents and Settings\\*\\Application Data\Mozilla\Firefox\Profiles\*\places.sqlite"
     $firefoxHistoryPath2 = "C:\\Documents and Settings\\*\\Application Data\Mozilla\Firefox\Profiles\*\bookmarkbackups\*.jsonlz4"
     try {
-        Get-ChildItem $firefoxHistoryPath $path -ErrorAction Stop | Copy-Item -Destination $outputDir\\FFplaces.sqlite -Force
-        Get-ChildItem $firefoxHistoryPath2 $path -ErrorAction Stop | Copy-Item -Destination $outputDir\\FFBookmarks.jsonlz4 -Force
+        Get-ChildItem $firefoxHistoryPath $path -ErrorAction Stop | Copy-Item -Destination $ffPath\\FFplaces.sqlite -Force
+        Get-ChildItem $firefoxHistoryPath2 $path -ErrorAction Stop | Copy-Item -Destination $ffPath\\FFBookmarks.jsonlz4 -Force
     } catch {
         Write-Output-error "Error collecting FF1 browser history: $_" "$outputDir\error_log.txt"
     }
 } elseif ($valueBasedOnOS -eq "Unknown OS Version" -or $valueBasedOnOS -eq "") {
     Write-Output-error "Error collecting FF0 browser history due to OS version - $_" "$outputDir\error_log.txt"
 } elseif($valueBasedOnOS -eq "Windows Vista" -or $valueBasedOnOS -eq "Windows 7" -or $valueBasedOnOS -eq "Windows 8" -or $valueBasedOnOS -eq "Windows 8.1" -or $valueBasedOnOS -eq "Windows 10" -or $valueBasedOnOS -eq "Windows 11") {
-    $firefoxHistoryPath = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\places.sqlite"
-    $firefoxHistoryPath2 = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\bookmarkbackups\*.jsonlz4"
-    try {
-        Get-ChildItem $firefoxHistoryPath $path -ErrorAction Stop | Copy-Item -Destination $outputDir\\FFplaces.sqlite -Force
-        Get-ChildItem $firefoxHistoryPath2 $path -ErrorAction Stop | Copy-Item -Destination $outputDir\\FFBookmarks.jsonlz4 -Force
-    } catch {
-        Write-Output-error "Error collecting FF2 browser history: $_" "$outputDir\error_log.txt"
-    }
+    $ffPaths = @(
+        "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\places.sqlite",
+        "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\bookmarkbackups\*.jsonlz4",
+        "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\cookies.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\logins.json"
+        )
+        $counter = 1
+        foreach ($path in $ffPaths) {
+            $fileName = Split-Path -Leaf $path
+            $extension = [System.IO.Path]::GetExtension($fileName)
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+            Write-Output "Attempting to Export FFpaths $counter and logins for $baseName"
+            $destination = Join-Path $ffPath ("$baseName$counter$extension" -replace '[\\/:*?"<>|]', '')
+            Get-ChildItem $path -ErrorAction SilentlyContinue | Copy-Item -Destination $destination -Force
+            $counter++
+        }
+        Write-Output "Attempting to Export FF Bookmarks and logins for $valueBasedOnOS"
 } else {
     Write-Output-error "Error collecting FF3 browser history - $_" "$outputDir\error_log.txt"
 }
@@ -402,12 +516,11 @@ $jobs += Start-Job -ScriptBlock {
     try {
         $cookiePaths = @(
             "C:\Users\*\AppData\Local\Google\Chrome\User Data\Default\Cookies",
-            "C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\cookies.sqlite",
             "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\Cookies"
         )
         $c = 1
         foreach ($path in $cookiePaths) {
-            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\cookies$c.sqlite -Force
+            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $cePath\\cookies$c.sqlite -Force
             $c++
         }
     } catch {
@@ -498,8 +611,8 @@ try {
 # Google Chrome Extension Collection
 try {
     $chromeExtensionsPaths = @(
-        "%USERPROFILE%\AppData\Local\Google\Chrome\User Data\*\Extensions\*\*",
-        "%USERPROFILE%\AppData\Local\Microsoft\Edge\User Data\*\Extensions\*\*"
+        "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Extensions\*\*",
+        "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Extensions\*\*"
     )
     $chromeExtensionsPaths | ForEach-Object {
         $chromeExtensions = Get-ChildItem -Path $_ -Recurse -Directory -ErrorAction SilentlyContinue
@@ -512,7 +625,7 @@ try {
                     Name = $extensionInfo.name
                     Version = $extensionInfo.version
                     Description = $extensionInfo.description
-                } | Out-File -FilePath "$outputDir\\ChromeExtensions.txt" -Append -Force
+                } | Out-File -FilePath "$cePath\\ChromeExtensions.txt" -Append -Force
             }
         }
     }
@@ -527,30 +640,138 @@ try {
 
 # Collect Chrome/Edge browser history based on OS version
     if ($valueBasedOnOS -eq "Windows XP") {
-        $chromeHistoryPath = "%USERPROFILE%\Local Settings\Application Data\Google\Chrome\User Data\*\History"
-        Get-ChildItem  $chromeHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\chromeedgeHistory -Force
-        Write-Output "Exporting Chrome/Edge browser history for XP: $firefoxHistoryPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
-    } elseif ($valueBasedOnOS -eq "Windows Vista" -or $valueBasedOnOS -eq "Unknown OS Version") {
-        Write-Output-error "Error collecting Chrome/Edge history - $_" "$outputDir\\error_log.txt"
+        $chromePathsXP = @(
+            "c:\Documents and Settings\*\Local Settings\Application Data\Google\Chrome\User Data\Default\Bookmarks"
+        )
+        $b=1
+        foreach ($path in $chromePathsXP) {
+            $fileName = Split-Path -Leaf $path
+            $destination = Join-Path $outputDir $fileName$b
+            Get-ChildItem $path -ErrorAction SilentlyContinue | Copy-Item -Destination $destination -Force
+            Write-Output "Exporting $fileName for $valueBasedOnOS" | Add-Content -Path "$cePath\\script_log.txt"
+            $b++
+        }
+        Write-Output "Attempting to Export Chrome/Edge Bookmarks for $valueBasedOnOS"
+    } elseif ($valueBasedOnOS -eq "Windows Vista" -or $valueBasedOnOS -eq "Windows 7" -or $valueBasedOnOS -eq "Windows 8" -or $valueBasedOnOS -eq "Windows 8.1" -or $valueBasedOnOS -eq "Windows 10" -or $valueBasedOnOS -eq "Windows 11") {
+        $chromePaths = @(
+            "C:\\Users\\*\\Local Settings\Application Data\Google\Chrome\User Data\*\History",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Bookmarks",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Bookmarks.bak",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks.msbak",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Login Data",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Login Data",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Login Data For Account",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Login Data For Account",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Local Storage\*",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Local Storage\*",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\File System",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\File System",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Web Data",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Web Data",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Shortcuts",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Shortcuts",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Network Action Predictor",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Network Action Predictor",
+            "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Login Data",
+            "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Login Data"
+        )
+        $counter = 1
+        foreach ($path in $chromePaths) {
+            if (Test-Path $path) {
+                if (Test-Path $path -PathType Container) {
+                    $lastFolder = Split-Path -Leaf $path
+                    $destination = Join-Path $cePath ("$counter$lastFolder" -replace '[\\/:*?"<>|]', '')
+                    Write-Output "Attempting to Error check $path at $destination for $valueBasedOnOS"
+                    Copy-Item $path -Destination $destination -Recurse -Force
+                } elseif (Test-Path $path -PathType Leaf) {
+                    $fileName = Split-Path -Leaf $path
+                    $extension = [System.IO.Path]::GetExtension($fileName)
+                    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                    $destination = Join-Path $cePath "$baseName$counter$extension"
+                    Copy-Item $path -Destination $destination -Force
+                }
+                $counter++
+            } else {
+            Write-Output "Path $path does not exist."
+            }
+        }
+        Write-Output "Attempting to Export Chrome/Edge Bookmarks & Login Data for $valueBasedOnOS"
     } else {
-        $chromeHistoryPath = "%USERPROFILE%\AppData\Local\Google\Chrome\User Data\*\History"
-        Get-ChildItem  $chromeHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\chromeedgeHistory -Force
-        $chromeHistoryPath2 = "%USERPROFILE%\AppData\Local\Microsoft\Edge\User Data\*\History"
-        Get-ChildItem  $chromeHistoryPath2 $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\chromeedgeHistory2 -Force
-        # Write-Output "Exporting Chrome/Edge browser history for Vista and above: $firefoxHistoryPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+        Write-Output-error "Error collecting Chrome/Edge history - $_" "$outputDir\\error_log.txt"
     }
+
+if ($ffversion -lt 26 -and $ffversion -gt 2) {
+    $ffDLPaths = @(
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\downloads.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\downloads.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\extensions.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\extensions.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\addons.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\addons.sqlite"
+    )
+    $b=1
+    foreach ($path in $ffDLPaths) {
+        $fileName = Split-Path -Leaf $path
+        $destination = Join-Path $ffPath $fileName$b
+        Get-ChildItem $path -ErrorAction SilentlyContinue | Copy-Item -Destination $destination -Force
+        Write-Output "Exporting $fileName for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+        $b++
+    }
+    Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
+} elseif ($ffversion -gt 25) {
+    $ffDLPaths = @(
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\places.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\places.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\formhistory.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\formhistory.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\extensions.json",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\extensions.json",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default\addons.json",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\addons.json"
+    )
+    $counter = 1
+    foreach ($path in $chromePaths) {
+        if (Test-Path $path -PathType Container) {
+            $lastFolder = Split-Path -Leaf $path
+            $destination = Join-Path $ffPath ("$counter$lastFolder" -replace '[\\/:*?"<>|]', '')
+            Write-Output "Attempting to Error check $path at $destination for $valueBasedOnOS and FF:$ffversion"
+            Copy-Item $path -Destination $destination -Recurse -Force
+        } elseif (Test-Path $path -PathType Leaf) {
+            $fileName = Split-Path -Leaf $path
+            $extension = [System.IO.Path]::GetExtension($fileName)
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+            $destination = Join-Path $ffPath "$baseName$counter$extension"
+            Copy-Item $path -Destination $destination -Force
+        }
+        $counter++
+    }
+    Write-Output "Attempting to Export FF Downloads for $valueBasedOnOS and FF:$ffversion"
+} else {
+    Write-Output-error "Error collecting Chrome/Edge history - $_" "$outputDir\\error_log.txt"
+}
+
 
 # Firefox History Collection
 try {
-    $firefoxHistoryPath = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default\\places.sqlite"
-    $firefoxHistoryFiles = Get-ChildItem -Path $firefoxHistoryPath -ErrorAction SilentlyContinue
-    $firefoxHistoryFiles | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination "$outputDir\\FirefoxHistory" -Force
+    $ffPaths = @(
+        "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default\\places.sqlite",
+        "C:\\Users\\*\\AppData\Roaming\Mozilla\Firefox\Profiles\*.default*\webappstore.sqlite"
+    )
+    $counter = 1
+    foreach ($path in $ffPaths) {
+        $fileName = Split-Path -Leaf $path
+        $extension = [System.IO.Path]::GetExtension($fileName)
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+        $destination = Join-Path $ffPath "$baseName$counter$extension"
+        Get-ChildItem $path -ErrorAction Continue | Copy-Item -Destination $destination -Force
+        $counter++
     }
+    Write-Output "Attempting to Export FF History & HTML5 Storage"
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
-        Write-Output-error "Error collecting Firefox history - $_" "$outputDir\\error_log.txt"
+        Write-Output-error "Error collecting FF History & HTML5 Storage - $_" "$outputDir\\error_log.txt"
     } finally {
         $logMutex.ReleaseMutex() | Out-Null
     }
@@ -558,9 +779,9 @@ try {
 
 #Media History Collection
 try {
-    $chromeMediaHistoryPath = "%USERPROFILE%\AppData\Local\Google\Chrome\User Data\*\Media History"
-    Get-ChildItem  $chromeMediaHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\chromeMediaHistory -Force
-    # Write-Output "Exporting Chrome browser media history: $chromeMediaHistoryPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+    $chromeMediaHistoryPath = "C:\\Users\\*\\AppData\Local\Google\Chrome\User Data\Default\Media History"
+    Get-ChildItem  $chromeMediaHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $cePath\\chromeMediaHistory -Force
+    Write-Output "Exporting Chrome browser media history: $chromeMediaHistoryPath for $valueBasedOnOS"
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
@@ -570,9 +791,9 @@ try {
     }
 }
 try {
-    $edgeMediaHistoryPath = "%USERPROFILE%\AppData\Local\Microsoft\Edge\User Data\*\Media History"
-    Get-ChildItem  $edgeMediaHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir\\EdgeMediaHistory -Force
-    # Write-Output "Exporting Edge browser media history: $edgeMediaHistoryPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+    $edgeMediaHistoryPath = "C:\\Users\\*\\AppData\Local\Microsoft\Edge\User Data\Default\Media History"
+    Get-ChildItem  $edgeMediaHistoryPath $path -ErrorAction SilentlyContinue | Copy-Item -Destination $cePath\\EdgeMediaHistory -Force
+    Write-Output "Exporting Edge browser media history: $edgeMediaHistoryPath for $valueBasedOnOS"
 } catch {
     $logMutex.WaitOne() | Out-Null
     try {
@@ -582,19 +803,14 @@ try {
     }
 }
 
-# %USERPROFILE%\AppData\Roaming\Mozilla\Firefox\Profiles\<random_text.default\places.sqlite
-# %USERPROFILE%\AppData\Roaming\Mozilla\Firefox\Profiles\<random_text.default\bookmarkbackups\bookmarks.<data>.jsonlz4
-# %USERPROFILE%\AppData\Roaming\Mozilla\Firefox\Profiles\<random_text.default\bookmarkbackups\bookmarks.<data>.json
-# %USERPROFILE%\AppData\Roaming\Mozilla\Firefox\Profiles\<random_text.default\bookmarkbackups\bookmarks.<data>.html
-# %USERPROFILE%\AppData\Roaming\Mozilla\Firefox\Profiles\<random_text.default\bookmarkbackups\bookmarks.<data>.json
 if ($ffversion -gt 2) {
     try {
         $firefoxBookmarksPath = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default*\\bookmarkbackups"
         $firefoxBookmarks = Get-ChildItem $firefoxBookmarksPath $path -ErrorAction SilentlyContinue
-        Write-Output "Exporting Firefox browser bookmarks: $firefoxBookmarksPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+        Write-Output "Exporting Firefox browser bookmarks: $firefoxBookmarksPath for $valueBasedOnOS"
         $firefoxBookmarks | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination $outputDir -Force
-            Write-Output "Exporting Firefox browser bookmarks 1 : $_ for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+            Copy-Item -Path $_.FullName -Destination $ffPath -Force
+            Write-Output "Exporting Firefox browser bookmarks 1 : $_ for $valueBasedOnOS"
         }
     } catch {
         $logMutex.WaitOne() | Out-Null
@@ -607,10 +823,10 @@ if ($ffversion -gt 2) {
     try {
         $firefoxBookmarksPath2 = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default*\\bookmarkbackups"
         Get-ChildItem $firefoxBookmarksPath2 $path -ErrorAction SilentlyContinue
-        Write-Output "Exporting Firefox browser bookmarks: $firefoxBookmarksPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+        Write-Output "Exporting Firefox browser bookmarks: $firefoxBookmarksPath for $valueBasedOnOS"
         $firefoxBookmarksPath2 | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination $outputDir -Force
-            Write-Output "Exporting Firefox browser bookmarks 2: $_ for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+            Copy-Item -Path $_.FullName -Destination $ffPath -Force
+            Write-Output "Exporting Firefox browser bookmarks 2: $_ for $valueBasedOnOS"
         }
     } catch {
         $logMutex.WaitOne() | Out-Null
@@ -623,10 +839,10 @@ if ($ffversion -gt 2) {
     try {
         $firefoxPlacesPath = "C:\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default*\\places.sqlite"
         Get-ChildItem $firefoxPlacesPath  $path -ErrorAction SilentlyContinue
-        Write-Output "Exporting Firefox browser places: $firefoxPlacesPath for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+        Write-Output "Exporting Firefox browser places: $firefoxPlacesPath for $valueBasedOnOS"
         $firefoxPlacesPath | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination $outputDir -Force
-            Write-Output "Error collecting FF Places: $_ for $valueBasedOnOS" | Add-Content -Path "$outputDir\\script_log.txt"
+            Copy-Item -Path $_.FullName -Destination $ffPath -Force
+            Write-Output "Error collecting FF Places: $_ for $valueBasedOnOS"
         }
     } catch {
         $logMutex.WaitOne() | Out-Null
@@ -645,7 +861,7 @@ try {
     $edgeHistoryPath = "C:\\Users\\*\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History"
     $edgeHistoryFiles = Get-ChildItem -Path $edgeHistoryPath -ErrorAction SilentlyContinue
     $edgeHistoryFiles | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination "$outputDir\\EdgeHistory.sqlite" -Force
+        Copy-Item -Path $_.FullName -Destination "$cePath\\EdgeHistory.sqlite" -Force
     }
 } catch {
     $logMutex.WaitOne() | Out-Null
