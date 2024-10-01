@@ -21,7 +21,7 @@ Start-Transcript -Path $logFile -Append
 
 # Initialize error logging functions
 $global:errorList = @()
-function Write-Output-Error {
+function Write-ErrorLog {
     param (
         [string] $Message,
         [string] $LogFile = (Join-Path $outputDir "error_log.txt")
@@ -51,7 +51,7 @@ function Get-FileHashSafely {
         $hash = Get-FileHash -Path $FilePath -Algorithm $Algorithm -ErrorAction Stop
         return $hash.Hash
     } catch {
-        Write-Output-Error "Error calculating hash for file: $FilePath - $_"
+        Write-ErrorLog "Error calculating hash for file: $FilePath - $_"
         return $null
     }
 }
@@ -77,7 +77,7 @@ function Copy-ItemWithHierarchy {
             }
         }
     } catch {
-        Write-Output-Error "Error copying items from $source to $destination - $_"
+        Write-ErrorLog "Error copying items from $source to $destination - $_"
     }
 }
 
@@ -100,7 +100,7 @@ try {
     # Output the value
     "Windows Version: $valueBasedOnOS" | Add-Content -Path (Join-Path $outputDir "winver_log.txt")
 } catch {
-    Write-Output-Error "Error detecting Windows version - $_"
+    Write-ErrorLog "Error detecting Windows version - $_"
 }
 
 # Create subdirectories
@@ -109,7 +109,7 @@ $subDirs | ForEach-Object {
     try {
         New-Item -ItemType Directory -Path (Join-Path $outputDir $_) -ErrorAction SilentlyContinue | Out-Null
     } catch {
-        Write-Output-Error "Error creating subdirectory $_ - $_"
+        Write-ErrorLog "Error creating subdirectory $_ - $_"
     }
 }
 
@@ -122,12 +122,12 @@ try {
         "Brave Browser is not installed." | Add-Content -Path (Join-Path $outputDir "brave_log.txt")
     }
 } catch {
-    Write-Output-Error "Error checking for Brave browser - $_"
+    Write-ErrorLog "Error checking for Brave browser - $_"
 }
 
 # Functions for each data collection task
 
-function Collect-SystemInfo {
+function Get-SystemInfo {
     param($outputDir)
     try {
         $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
@@ -148,11 +148,11 @@ function Collect-SystemInfo {
         }
         $systemInfo | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $outputDir "SystemInfo.json")
     } catch {
-        Write-Output-Error "Error collecting system information - $_"
+        Write-ErrorLog "Error collecting system information - $_"
     }
 }
 
-function Collect-StartupItems {
+function Get-StartupItems {
     param($outputDir)
     try {
         $startupLocations = @(
@@ -170,11 +170,11 @@ function Collect-StartupItems {
         }
         $startupItems | ConvertTo-Json | Out-File -FilePath (Join-Path $outputDir "StartupItems.json")
     } catch {
-        Write-Output-Error "Error collecting startup items - $_"
+        Write-ErrorLog "Error collecting startup items - $_"
     }
 }
 
-function Collect-UserInfo {
+function Get-UserInfo {
     param($outputDir)
     try {
         $localUsers = net user | Select-String -Pattern '^---' -Context 0,1000 | ForEach-Object {
@@ -191,11 +191,11 @@ function Collect-UserInfo {
         }
         $userInfo | ConvertTo-Json | Out-File -FilePath (Join-Path $outputDir "UserInfo.json")
     } catch {
-        Write-Output-Error "Error collecting user and group information - $_"
+        Write-ErrorLog "Error collecting user and group information - $_"
     }
 }
 
-function Collect-EventLogs {
+function Get-EventLogs {
     param($outputDir)
     $eventLogs = @("Application", "Security", "System")
     foreach ($logName in $eventLogs) {
@@ -204,25 +204,25 @@ function Collect-EventLogs {
             if ($events -and $events.Count -gt 0) {
                 $events | Export-Clixml -Path (Join-Path $outputDir "${logName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml")
             } else {
-                Write-Output-Error "No events found in $logName log"
+                Write-ErrorLog "No events found in $logName log"
             }
         } catch {
-            Write-Output-Error "Failed to collect $logName event logs: $_"
+            Write-ErrorLog "Failed to collect $logName event logs: $_"
         }
     }
 }
 
-function Collect-NetworkConnections {
+function Get-NetworkConnections {
     param($outputDir)
     try {
         $netstatOutput = netstat -ano
         $netstatOutput | Out-File -FilePath (Join-Path $outputDir "NetworkConnections.txt")
     } catch {
-        Write-Output-Error "Error collecting network connections - $_"
+        Write-ErrorLog "Error collecting network connections - $_"
     }
 }
 
-function Collect-RegistryStartupItems {
+function Get-RegistryStartupItems {
     param($outputDir)
     try {
         $registryKeys = @(
@@ -239,21 +239,21 @@ function Collect-RegistryStartupItems {
             }
         }
     } catch {
-        Write-Output-Error "Error collecting registry startup items - $_"
+        Write-ErrorLog "Error collecting registry startup items - $_"
     }
 }
 
-function Collect-ShimcacheData {
+function Get-ShimcacheData {
     param($outputDir)
     try {
         $shimcacheFile = Join-Path $outputDir "Shimcache.reg"
         reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
     } catch {
-        Write-Output-Error "Error collecting Shimcache data - $_"
+        Write-ErrorLog "Error collecting Shimcache data - $_"
     }
 }
 
-function Collect-BrowserData {
+function Get-BrowserData {
     param($outputDir)
     try {
         # Firefox data
@@ -308,11 +308,11 @@ function Collect-BrowserData {
             "Brave Browser artifacts have been copied to $bboutputDir" | Add-Content -Path (Join-Path $outputDir "brave_log.txt")
         }
     } catch {
-        Write-Output-Error "Error collecting browser data - $_"
+        Write-ErrorLog "Error collecting browser data - $_"
     }
 }
 
-function Collect-BrowserExtensions {
+function Get-BrowserExtensions {
     param($outputDir)
     try {
         # Firefox extensions
@@ -353,11 +353,11 @@ function Collect-BrowserExtensions {
             }
         }
     } catch {
-        Write-Output-Error "Error collecting browser extensions - $_"
+        Write-ErrorLog "Error collecting browser extensions - $_"
     }
 }
 
-function Collect-AdditionalArtifacts {
+function Get-AdditionalArtifacts {
     param($outputDir)
     try {
         # Password files
@@ -393,11 +393,11 @@ function Collect-AdditionalArtifacts {
             Copy-Item -Path $file.FullName -Destination $jumpListDir -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        Write-Output-Error "Error collecting additional artifacts - $_"
+        Write-ErrorLog "Error collecting additional artifacts - $_"
     }
 }
 
-function Hash-CollectedFiles {
+function Get-FileHashes {
     param($outputDir)
     try {
         $collectedFiles = Get-ChildItem -Path $outputDir -File -Recurse -ErrorAction Stop
@@ -414,26 +414,26 @@ function Hash-CollectedFiles {
         if ($hashes.Count -gt 0) {
             $hashes | Export-Csv -Path (Join-Path $outputDir "Hashes.csv") -NoTypeInformation
         } else {
-            Write-Output-Error "No file hashes were generated"
+            Write-ErrorLog "No file hashes were generated"
         }
     } catch {
-        Write-Output-Error "Error during file hashing: $_"
+        Write-ErrorLog "Error during file hashing: $_"
     }
 }
 
 # Now, call the functions sequentially
 
-Collect-SystemInfo -outputDir $outputDir
-Collect-StartupItems -outputDir $outputDir
-Collect-UserInfo -outputDir $outputDir
-Collect-EventLogs -outputDir $outputDir
-Collect-NetworkConnections -outputDir $outputDir
-Collect-RegistryStartupItems -outputDir $outputDir
-Collect-ShimcacheData -outputDir $outputDir
-Collect-BrowserData -outputDir $outputDir
-Collect-BrowserExtensions -outputDir $outputDir
-Collect-AdditionalArtifacts -outputDir $outputDir
-Hash-CollectedFiles -outputDir $outputDir
+Get-SystemInfo -outputDir $outputDir
+Get-StartupItems -outputDir $outputDir
+Get-UserInfo -outputDir $outputDir
+Get-EventLogs -outputDir $outputDir
+Get-NetworkConnections -outputDir $outputDir
+Get-RegistryStartupItems -outputDir $outputDir
+Get-ShimcacheData -outputDir $outputDir
+Get-BrowserData -outputDir $outputDir
+Get-BrowserExtensions -outputDir $outputDir
+Get-AdditionalArtifacts -outputDir $outputDir
+Get-FileHashes -outputDir $outputDir
 
 # Create backup
 try {
@@ -444,10 +444,10 @@ try {
     if (Test-Path $zipFilePath) {
         #"Backup created successfully: $zipFilePath" | Add-Content -Path (Join-Path $outputDir "script_log.txt")
     } else {
-        Write-Output-Error "Zip file was not created."
+        Write-ErrorLog "Zip file was not created."
     }
 } catch {
-    Write-Output-Error "Error creating backup zip file - $_"
+    Write-ErrorLog "Error creating backup zip file - $_"
 }
 
 # Stop logging
