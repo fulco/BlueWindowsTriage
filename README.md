@@ -69,3 +69,13 @@ Contributions to improve the script are welcome. Please adhere to the standard G
 ## Contact
 
 For any questions or feedback, please contact the script maintainer at [security@fulco.net](mailto:security@fulco.net).
+
+## Testing
+
+Unit tests are written with [Pester](https://github.com/pester/Pester). To run all tests, execute the following in PowerShell from the repository root:
+
+```powershell
+Invoke-Pester
+```
+
+The tests mock file system operations, so running them will not modify your system.
