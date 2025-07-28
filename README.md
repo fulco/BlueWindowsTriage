@@ -9,7 +9,7 @@ This PowerShell script is designed to perform rapid initial data collection on a
 
 - **System Information Collection**: Captures comprehensive details such as hostname, OS version, uptime, installed software, running processes (including the process owner), and network configuration.
 - **User and Group Information**: Gathers data on local users, user groups, and recently created user accounts, including account status and last logon times.
-- **Event Logs**: Retrieves and exports the Security, System, and Application logs from the last 24 hours to evtx format, aiding in quick timeline analysis.
+- **Event Logs**: Retrieves and exports the most recent 1500 entries from the Security, System, and Application logs to XML files saved with the `.evtx` extension, aiding in quick timeline analysis.
 - **Active Network Connections**: Documents all current network connections with details like local and remote addresses, port numbers, and the owning process.
 - **Registry Analysis**: Examines critical registry keys for autostart configurations, exporting the findings in JSON format for further analysis.
 - **File System Analysis**: Performs a recursive search in critical system directories for recently modified files, collecting important metadata and computing SHA-256 hashes for data integrity.
