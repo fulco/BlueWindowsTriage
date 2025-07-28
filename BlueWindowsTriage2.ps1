@@ -438,7 +438,7 @@ $artifactJobs = @(
             if ($passwordFiles -and $passwordFiles.Count -gt 0) {
                 $passwordFiles | Export-Clixml -Path (Join-Path $outputDir "${logName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml")
             } else {
-                Write-Output-Error "No Passsword Files found in $logName log"
+                Write-Output-Error "No Password Files found in $logName log"
             }
             $passwordFiles | ForEach-Object {
                 Copy-Item -Path $_.FullName -Destination (Join-Path $outputDir "PasswordFiles") -Force
