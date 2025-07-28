@@ -308,7 +308,7 @@ $jobs += Start-Job -ScriptBlock {
         foreach ($key in $registryKeys) {
             $keyName = $key.Split("\")[-1]
             $keyValues = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_$keyName$1.json"
+            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_${keyName}_$i.json"
 			$i++
         }
     } catch {
