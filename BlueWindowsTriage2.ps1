@@ -169,12 +169,20 @@ $jobFunctions = @{
         $WriteOutputErrorScriptBlock = [ScriptBlock]::Create($WriteOutputErrorString)
         Set-Item -Path Function:\Write-Output-Error -Value $WriteOutputErrorScriptBlock
         try {
+            # Enumerate installed software from the registry instead of Win32_Product,
+            # which forces an MSI consistency/self-repair check per package (can take minutes).
+            $installedSoftware = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue) +
+                                  @(Get-ItemProperty 'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue) |
+                                  Where-Object { $_.DisplayName } | Select-Object DisplayName, DisplayVersion, InstallDate
+
             $systemInfo = @{
                 "Hostname" = $env:COMPUTERNAME
-                "OS Version" = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+                "OS Version" = (Get-CimInstance -ClassName Win32_OperatingSystem).Caption
                 "Uptime" = (Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
-                "Installed Software" = Get-WmiObject -Class Win32_Product | Select-Object Name, Version, InstallDate
-                "Running Processes" = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}, @{Name="ExecutablePath";Expression={$_.Path}}
+                "Installed Software" = $installedSoftware
+                # -IncludeUserName resolves the owning user via a lightweight token lookup
+                # instead of a per-process WMI GetOwner() call.
+                "Running Processes" = Get-Process -IncludeUserName -ErrorAction SilentlyContinue | Select-Object Name, ID, Path, UserName
                 "Network Configuration" = Get-NetIPConfiguration
             }
             $systemInfo | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $outputDir "SystemInfo.json")
@@ -221,7 +229,7 @@ foreach ($jobName in $jobFunctions.Keys) {
 $eventLogs = @("Application", "Security", "System")
 foreach ($logName in $eventLogs) {
     $jobs += Start-Job -Name "EventLog_$logName" -ScriptBlock {
-        param($outputDir, $logName)
+        param($outputDir, $logName, $WriteOutputErrorString)
         # Recreate the Write-Output-Error function in the job's context
         $WriteOutputErrorScriptBlock = [ScriptBlock]::Create($WriteOutputErrorString)
         Set-Item -Path Function:\Write-Output-Error -Value $WriteOutputErrorScriptBlock
@@ -435,10 +443,8 @@ $artifactJobs = @(
             $WriteOutputErrorScriptBlock = [ScriptBlock]::Create($WriteOutputErrorString)
             Set-Item -Path Function:\Write-Output-Error -Value $WriteOutputErrorScriptBlock
             $passwordFiles = Get-ChildItem -Path "C:\Users\*\Documents\*password*" -Recurse -ErrorAction SilentlyContinue
-            if ($passwordFiles -and $passwordFiles.Count -gt 0) {
-                $passwordFiles | Export-Clixml -Path (Join-Path $outputDir "${logName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml")
-            } else {
-                Write-Output-Error "No Password Files found in $logName log"
+            if (-not $passwordFiles -or $passwordFiles.Count -eq 0) {
+                Write-Output-Error "No password files found"
             }
             $passwordFiles | ForEach-Object {
                 Copy-Item -Path $_.FullName -Destination (Join-Path $outputDir "PasswordFiles") -Force
@@ -527,23 +533,15 @@ $hashingJob = Start-Job -ScriptBlock {
 
 Wait-AndRemoveJobs -JobsArray @($hashingJob)
 
-# Create backup
+# Create backup by zipping the output directory directly (avoids copying the
+# entire collected dataset into a temp folder first, which doubled disk I/O).
 $parentDirectory = Split-Path -Path $outputDir -Parent
-$tempFolderName = "Temp$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-$tempFolderPath = Join-Path $parentDirectory $tempFolderName
-New-Item -ItemType Directory -Path $tempFolderPath -Force | Out-Null
-
-# Copy files to temporary folder
-Copy-ItemWithHierarchy -source $outputDir -destination $tempFolderPath
-
-# Compress the temporary folder
 $zipFileName = "IR-$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
 $zipFilePath = Join-Path $parentDirectory $zipFileName
-Compress-Archive -Path $tempFolderPath -DestinationPath $zipFilePath -CompressionLevel Optimal
+Compress-Archive -Path $outputDir -DestinationPath $zipFilePath -CompressionLevel Optimal
 
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
-    Remove-Item -Recurse -Force -Path $tempFolderPath
     #"Backup created successfully: $zipFilePath" | Add-Content -Path (Join-Path $outputDir "script_log.txt")
 } else {
     Write-Output-Error "Zip file was not created."
