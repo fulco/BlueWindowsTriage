@@ -100,12 +100,7 @@ function Get-FileHashSafely {
         $hash = Get-FileHash -Path $FilePath -Algorithm $Algorithm -ErrorAction SilentlyContinue
         return $hash.Hash
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error calculating hash for file: $FilePath - $_"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error calculating hash for file: $FilePath - $_"
         return $null
     }
 }
@@ -126,9 +121,21 @@ function Export-RegistryKey {
     try {
         REG EXPORT $keyPath "$outputDir\\$(($keyPath -replace '\\', '_')).reg" /y
     } catch {
+        Write-Output-error "Failed to export registry key: $keyPath. Error: $_"
+    }
+}
+
+# Script block injected into every background job via -InitializationScript so
+# job-scope code can log errors directly. Jobs run in separate processes and
+# don't inherit functions defined above, so without this, calls to
+# Write-Output-error inside a job silently fail (the function doesn't exist there).
+$jobInitScript = {
+    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
+    function Write-Output-error {
+        param([string]$Message, [string]$LogFile)
         $logMutex.WaitOne() | Out-Null
         try {
-            Write-Output "Failed to export registry key: $keyPath. Error: $_" | Add-Content -Path "$outputDir\\error_log.txt"
+            Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR: $Message"
         } finally {
             $logMutex.ReleaseMutex() | Out-Null
         }
@@ -139,165 +146,121 @@ function Export-RegistryKey {
 $jobs = @()
 
 # Collect system information
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
+        # Enumerate installed software from the registry instead of Win32_Product.
+        # Win32_Product forces an MSI consistency/self-repair check against every
+        # installed package, which can take minutes and has real side effects.
+        $installedSoftware = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue) +
+                              @(Get-ItemProperty 'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue) |
+                              Where-Object { $_.DisplayName } | Select-Object DisplayName, DisplayVersion, InstallDate
+
         $systemInfo = @{
             "Hostname"             = $env:COMPUTERNAME
-            "OS Version"           = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+            "OS Version"           = (Get-CimInstance -ClassName Win32_OperatingSystem).Caption
             "Uptime"               = (Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
-            "Installed Software"   = Get-WmiObject -Class Win32_Product | Select-Object Name, Version, InstallDate
-            # "Running Processes"  = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}
-            "Running Processes"    = Get-Process | Select-Object Name, ID, Path, @{Name="User";Expression={$_.GetOwner().User}}, @{Name="ExecutablePath";Expression={$_.Path}}
+            "Installed Software"   = $installedSoftware
+            # -IncludeUserName resolves the owning user via a lightweight token
+            # lookup instead of a per-process WMI GetOwner() call.
+            "Running Processes"    = Get-Process -IncludeUserName -ErrorAction SilentlyContinue | Select-Object Name, ID, Path, UserName
             "Network Configuration"= Get-NetIPConfiguration
         }
-        $systemInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\SystemInfo.json"
+        $systemInfo | ConvertTo-Json -Depth 4 | Out-File -FilePath "$outputDir\SystemInfo.json"
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting system information - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting system information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Collect startup items
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $startupItems = Get-CimInstance -ClassName Win32_StartupCommand | Select-Object -Property Command, Description, User, Location, Name
         $startupItems | ConvertTo-Json | Out-File -FilePath "$outputDir\StartupItems.json"
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting startup items - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting startup items - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Collect information about local users and groups
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
+        $localUsers = Get-LocalUser
         $userInfo = @{
-            "Local Users"        = Get-LocalUser | Select-Object Name, Enabled, LastLogon
-            "User Groups"        = Get-LocalGroup | Select-Object Name, SID
-            "Recent User Accounts"= Get-LocalUser | Where-Object {$_.CreateDate -ge (Get-Date).AddDays(-7)} | Select-Object Name, CreateDate
+            "Local Users"          = $localUsers | Select-Object Name, Enabled, LastLogon
+            "User Groups"          = Get-LocalGroup | Select-Object Name, SID
+            "Recent User Accounts" = $localUsers | Where-Object {$_.CreateDate -ge (Get-Date).AddDays(-7)} | Select-Object Name, CreateDate
         }
         $userInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\UserInfo.json"
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting user and group information - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting user and group information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Collect event logs in parallel
 # Collect application logs
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
 
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
     $tempEvtxPath = "$outputDir\Application_$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
         $events = Get-WinEvent -LogName Application -MaxEvents 1500
         $events | Export-Clixml -Path $tempEvtxPath
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output "Failed to collect Application event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Failed to collect Application event logs: $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect security logs
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
 
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
     $tempEvtxPath = "$outputDir\Security_$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
         $events = Get-WinEvent -LogName Security -MaxEvents 1500
         $events | Export-Clixml -Path $tempEvtxPath
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output "Failed to collect Security event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Failed to collect Security event logs: $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect system logs
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
 
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
     $tempEvtxPath = "$outputDir\System__$(Get-Date -Format 'yyyyMMdd_HHmmss').evtx"
     try {
         $events = Get-WinEvent -LogName System -MaxEvents 1500
         $events | Export-Clixml -Path $tempEvtxPath
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output "Failed to collect System event logs: $_" | Add-Content -Path "$outputDir\\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Failed to collect System event logs: $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect current network connections
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $networkConnections = Get-NetTCPConnection | Select-Object State, LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess
         $networkConnections | Export-Csv -Path "$outputDir\\NetworkConnections.csv" -NoTypeInformation
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting network connections - $_"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting network connections - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect registry startup items
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
-	$i = 1
+
     try {
         $registryKeys = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -306,49 +269,32 @@ $jobs += Start-Job -ScriptBlock {
             "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
         )
         foreach ($key in $registryKeys) {
+            $hive = ($key -split ':')[0]
             $keyName = $key.Split("\")[-1]
             $keyValues = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_${keyName}_$i.json"
-			$i++
+            $keyValues | ConvertTo-Json | Out-File -FilePath "$outputDir\Registry_${hive}_${keyName}.json"
         }
     } catch {
-		$i++
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting registry data - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting registry data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Export Shimcache data
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $shimcacheFile = "$outputDir\Shimcache.reg"
         & reg export "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" $shimcacheFile /y
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting Shimcache data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect recent files from critical directories
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $criticalDirs = @("C:\Windows\System32", "C:\Windows\SysWOW64", "C:\Users\Public")
@@ -357,21 +303,13 @@ $jobs += Start-Job -ScriptBlock {
             $recentFiles | Select-Object FullName, LastWriteTime, Length, @{Name="Hash"; Expression={(Get-FileHash -Path $_.FullName).Hash}} | Export-Csv -Path "$outputDir\RecentFiles_$($dir.Replace(':', '').Replace('\', '_')).csv" -NoTypeInformation -ErrorAction Ignore
         }
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting file system data - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting file system data - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 # Collect cookies from browsers for further analysis
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $cookiePaths = @(
@@ -380,57 +318,40 @@ $jobs += Start-Job -ScriptBlock {
             "C:\Users\*\AppData\Local\Microsoft\Edge\User Data\Default\Cookies"
         )
         foreach ($path in $cookiePaths) {
-            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $using:outputDir -Force
+            Get-ChildItem -Path $path -ErrorAction SilentlyContinue | Copy-Item -Destination $outputDir -Force
         }
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting browser cookies - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Collect scheduled tasks information
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
         $scheduledTasks = Get-ScheduledTask | Select-Object TaskName, TaskPath, State, LastRunTime, NextRunTime, Actions
         $scheduledTasks | ConvertTo-Json | Out-File -FilePath "$outputDir\ScheduledTasks.json"
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting scheduled tasks - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
 
 # Gather detailed information about services, including their status and configs
-$jobs += Start-Job -ScriptBlock {
+$jobs += Start-Job -InitializationScript $jobInitScript -ScriptBlock {
     param($outputDir)
-    
-    # Initialize a mutex for synchronized logging
-    $logMutex = [System.Threading.Mutex]::OpenExisting("LogMutex")
 
     try {
-        $servicesInfo = Get-Service | Select-Object Name, DisplayName, Status, StartType, @{Name="Path";Expression={(Get-WmiObject -Class Win32_Service -Filter "Name='$($_.Name)'").PathName}}
+        # Look up all service paths in a single bulk CIM call instead of
+        # issuing a separate WMI query per service (N+1 query pattern).
+        $servicePaths = @{}
+        Get-CimInstance -ClassName Win32_Service | ForEach-Object { $servicePaths[$_.Name] = $_.PathName }
+        $servicesInfo = Get-Service | Select-Object Name, DisplayName, Status, StartType, @{Name="Path";Expression={$servicePaths[$_.Name]}}
         $servicesInfo | ConvertTo-Json | Out-File -FilePath "$outputDir\ServicesInfo.json"
     } catch {
-        $logMutex.WaitOne() | Out-Null
-        try {
-            Write-Output-error "Error collecting service information - $_" "$outputDir\error_log.txt"
-        } finally {
-            $logMutex.ReleaseMutex() | Out-Null
-        }
+        Write-Output-error "Error collecting service information - $_" "$outputDir\error_log.txt"
     }
 } -ArgumentList $outputDir
 
@@ -580,7 +501,7 @@ try {
     # Create a subdirectory for prefetch files
     $prefetchDir = "$outputDir\\PreFetch"
     New-Item -ItemType Directory -Path $prefetchDir -Force | Out-Null
-    
+
     # Collect prefetch files
     $prefetchFiles = Get-ChildItem -Path "C:\\Windows\\Prefetch" -ErrorAction SilentlyContinue
     $prefetchFiles | Copy-Item -Destination $prefetchDir -Force
@@ -625,15 +546,21 @@ try {
 # Hashing of Collected Files
 try {
     $collectedFiles = Get-ChildItem -Path $outputDir -File -Recurse
+    # Buffer hash results and write them out once instead of taking the mutex
+    # and opening/closing the CSV for every single file.
+    $hashLines = New-Object System.Collections.Generic.List[string]
     foreach ($file in $collectedFiles) {
         $hash = Get-FileHashSafely -FilePath $file.FullName
         if ($hash) {
-            $logMutex.WaitOne() | Out-Null
-            try {
-                Add-Content -Path "$outputDir\\Hashes.csv" -Value "$($file.FullName),$hash"
-            } finally {
-                $logMutex.ReleaseMutex() | Out-Null
-            }
+            $hashLines.Add("$($file.FullName),$hash")
+        }
+    }
+    if ($hashLines.Count -gt 0) {
+        $logMutex.WaitOne() | Out-Null
+        try {
+            Add-Content -Path "$outputDir\\Hashes.csv" -Value $hashLines
+        } finally {
+            $logMutex.ReleaseMutex() | Out-Null
         }
     }
 } catch {
@@ -645,43 +572,15 @@ try {
     }
 }
 
-# Define the current working directory and the parent directory
+# Compress the output directory directly into a zip file in the parent
+# directory. (Previously this copied the entire output directory into a
+# sibling temp folder first, then zipped that copy - doubling disk I/O and
+# time for no benefit, since Compress-Archive can zip the source in place.)
 $parentDirectory = Split-Path -Path $outputDir -Parent
-$tempFolderName = "Temp$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-$tempFolderPath = "$parentDirectory\$tempFolderName"
-New-Item -ItemType Directory -Path $tempFolderPath -Force
-
-# Copy all files and folders recursively to the temporary folder while maintaining the directory structure
-Get-ChildItem -Path $outputDir -Recurse | ForEach-Object {
-    if ($_.FullName -ne $tempFolderPath) {
-        $destination = Join-Path -Path $tempFolderPath -ChildPath $_.FullName.Substring($outputDir.Length-1)
-        if ($_.PSIsContainer) {
-            $logMutex.WaitOne() | Out-Null
-            try {
-                if ($_.FullName -ne $tempFolderPath -and $_.Name -ne $tempFolderName -and !(Test-Path $destination)) {
-                    New-Item -ItemType Directory -Path $destination -Force
-                }
-            } finally {
-                $logMutex.ReleaseMutex() | Out-Null
-            }
-        } else {
-            $logMutex.WaitOne() | Out-Null
-            try {
-                if ($_.DirectoryName -ne $tempFolderPath -and !(Test-Path $destination)) {
-                    Copy-Item -Path $_.FullName -Destination $destination -Force
-                }
-            } finally {
-                $logMutex.ReleaseMutex() | Out-Null
-            }
-        }
-    }
-}
-
-# Compress the temporary folder into a zip file in the output directory
 $zipFileName = "IR-$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
 $zipFilePath = "$parentDirectory\$zipFileName"
 $zipParams = @{
-    path = $tempFolderPath
+    path = $outputDir
     destinationPath = $zipFilePath
     CompressionLevel = "Optimal"
 }
@@ -689,9 +588,6 @@ Compress-Archive @zipParams
 
 # Check if the zip file was created successfully
 if (Test-Path $zipFilePath) {
-    # Delete the temporary folder
-    Remove-Item -Recurse -Force -Path $tempFolderPath
-    wait-event -timeout 3
     $logMutex2.WaitOne() | Out-Null
     try {
         Write-Output "Backup created successfully: $zipFilePath" | Add-Content -Path "$outputDir\script_log.txt"
