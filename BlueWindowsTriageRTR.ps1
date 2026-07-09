@@ -177,17 +177,9 @@ function Get-StartupItems {
 function Get-UserInfo {
     param($outputDir)
     try {
-        $localUsers = net user | Select-String -Pattern '^---' -Context 0,1000 | ForEach-Object {
-            $_.Context.PostContext | Where-Object { $_ -match '\S' }
-        }
-
-        $localGroups = net localgroup | Select-String -Pattern '^---' -Context 0,1000 | ForEach-Object {
-            $_.Context.PostContext | Where-Object { $_ -match '\S' }
-        }
-
         $userInfo = @{
-            "Local Users" = $localUsers
-            "Local Groups" = $localGroups
+            "Local Users" = Get-LocalUser | Select-Object Name, Enabled, LastLogon
+            "Local Groups" = Get-LocalGroup | Select-Object Name, SID
         }
         $userInfo | ConvertTo-Json | Out-File -FilePath (Join-Path $outputDir "UserInfo.json")
     } catch {
@@ -200,7 +192,7 @@ function Get-EventLogs {
     $eventLogs = @("Application", "Security", "System")
     foreach ($logName in $eventLogs) {
         try {
-            $events = Get-EventLog -LogName $logName -Newest 1500 -ErrorAction Stop
+            $events = Get-WinEvent -LogName $logName -MaxEvents 1500 -ErrorAction Stop
             if ($events -and $events.Count -gt 0) {
                 $events | Export-Clixml -Path (Join-Path $outputDir "${logName}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml")
             } else {
